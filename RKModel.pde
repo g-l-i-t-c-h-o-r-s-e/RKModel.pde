@@ -1,6 +1,6 @@
 /*******************************************************************************
  * Animated MLP Gameloft RK Model Loader/Renderer for Processing 4 (WIP)
- * https://gist.github.com/g-l-i-t-c-h-o-r-s-e/5590148123825db0205a1ff0d0428f0e
+
  ********************************************************************************/
 
 int readInt4(byte[] b, int o) {
