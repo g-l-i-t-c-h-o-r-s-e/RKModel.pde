@@ -1,2 +1,2 @@
-# RKModel.pde
-Animated Gameloft RK Model Loader/Renderer for Processing 4.3
+# WIP
+Need to fix animations, textures, and probably other stuff.
