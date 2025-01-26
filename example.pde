@@ -8,7 +8,7 @@ void setup() {
   tex = loadImage("3702524.jpg"); //still working on textures
   model = new RKModel("pony_type01_muffins_lod1.rk", tex);
   model.loadAnimations("pony_type01.anim");
-  //model.playAnimation("apple_idle_01_l");
+  model.playAnimation("apple_idle_01_l");
   
   cam = new PeasyCam(this, 400);
 }
@@ -16,4 +16,6 @@ void setup() {
 void draw() {
   background(30);
   model.draw();
+  model.drawBones();
+  model.mesh.setStroke(color(255, 0, 0));
 }
