@@ -1,6 +1,7 @@
+
 /*******************************************************************************
  * Animated MLP Gameloft RK Model Loader/Renderer for Processing 4 (WIP)
-
+ * https://gist.github.com/g-l-i-t-c-h-o-r-s-e/5590148123825db0205a1ff0d0428f0e
  ********************************************************************************/
 
 int readInt4(byte[] b, int o) {
@@ -191,7 +192,7 @@ class RKModel {
   boolean hasAnimations = false;
   PShape mesh;
   PImage texture;
-  float scale = 5;
+  float scale = 1;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
 
   RKModel(String filename, PImage tex) {
@@ -323,24 +324,22 @@ class RKModel {
           for(int b=0; b<animationData.boneCount; b++) {
               BonePose pose = new BonePose();
               
-              // Read and convert position (Z-up to Y-up)
+              // Position conversion: Swap Y and Z, invert Y (Z-up to Y-up)
               pose.pos.x = readShort2(data, offset) / 32.0;
               pose.pos.z = readShort2(data, offset+2) / 32.0; // Original Y becomes Z
               pose.pos.y = -readShort2(data, offset+4) / 32.0; // Original Z becomes inverted Y
               offset += 6;
               
-              // Read and convert quaternion (right-handed to left-handed)
               float w = readShort2(data, offset) / 32767.0;
               float x = (byte)data[offset+2] / 127.0;
               float y = (byte)data[offset+3] / 127.0;
               float z = (byte)data[offset+4] / 127.0;
               offset += 5;
               
-              // Adjust quaternion components for coordinate system
               pose.quat[0] = w;
               pose.quat[1] = x;
-              pose.quat[2] = -z;  // Flip Z axis
-              pose.quat[3] = y;   // Swap Y/Z
+              pose.quat[2] = -z;  // Negate Z for left-handedness
+              pose.quat[3] = y;   // Original Y becomes Z
               
               frame.bones.add(pose);
           }
@@ -370,61 +369,68 @@ class RKModel {
     applyBonePoses();
   }
 
-void applyBonePoses() {
-    if(!hasAnimations || currentAnim == null) return;
-    
-    float t = currentAnim.frameTime * currentAnim.clip.fps;
-    int frameA = currentAnim.currentFrame;
-    int frameB = min(frameA + 1, currentAnim.clip.endFrame);
-    
-    AnimationFrame poseA = animationData.frames.get(frameA);
-    AnimationFrame poseB = animationData.frames.get(frameB);
+  void applyBonePoses() {
+      if (!hasAnimations || currentAnim == null) return;
+  
+      float t = currentAnim.frameTime * currentAnim.clip.fps;
+      int frameA = currentAnim.currentFrame;
+      int frameB = min(frameA + 1, currentAnim.clip.endFrame);
+  
+      AnimationFrame poseA = animationData.frames.get(frameA);
+      AnimationFrame poseB = animationData.frames.get(frameB);
+  
+      for (int i = 0; i < bones.size(); i++) {
+          Bone bone = bones.get(i);
+          int boneId = bone.id;
+  
+          if (boneId >= poseA.bones.size() || boneId >= poseB.bones.size()) continue;
+  
+          BonePose pA = poseA.bones.get(boneId);
+          BonePose pB = poseB.bones.get(boneId);
+  
+          // Position interpolation (existing code remains)
+          PVector animPosA = new PVector(pA.pos.x, pA.pos.z, -pA.pos.y);
+          PVector animPosB = new PVector(pB.pos.x, pB.pos.z, -pB.pos.y);
+          PVector pos = PVector.lerp(animPosA, animPosB, t);
+  
+          // Convert quaternions and interpolate
+          float[] qA = { pA.quat[0], pA.quat[1], pA.quat[3], -pA.quat[2] };
+          float[] qB = { pB.quat[0], pB.quat[1], pB.quat[3], -pB.quat[2] };
+          float[] quat = slerp(qA, qB, t);
+  
+          // Normalize the interpolated quaternion
+          float len = sqrt(quat[0]*quat[0] + quat[1]*quat[1] + quat[2]*quat[2] + quat[3]*quat[3]);
+          quat[0] /= len;
+          quat[1] /= len;
+          quat[2] /= len;
+          quat[3] /= len;
+  
+          // 1. Create rotation matrix from quaternion
+          PMatrix3D rotationMatrix = quatToMatrix(quat);
+          //rotationMatrix.translate(pos.x, pos.y, pos.z);
+          
+          // 2. Apply translation to the rotated space
+          PMatrix3D translationMatrix = new PMatrix3D();
+          translationMatrix.translate(pos.x, pos.y, pos.z);
+          
+          // 3. Combine as Translation * Rotation (T * R)
+          translationMatrix.apply(rotationMatrix);
+          bone.animatedMatrix = translationMatrix;
+          //bone.animatedMatrix = rotationMatrix;
 
-    for(int i=0; i<bones.size(); i++) {
-        Bone bone = bones.get(i);
-        int boneId = bone.id;
-        
-        if(boneId >= poseA.bones.size() || boneId >= poseB.bones.size()) continue;
-
-        BonePose pA = poseA.bones.get(boneId);
-        BonePose pB = poseB.bones.get(boneId);
-
-        // Position interpolation (existing code remains)
-        PVector animPosA = new PVector(pA.pos.x, pA.pos.z, -pA.pos.y);
-        PVector animPosB = new PVector(pB.pos.x, pB.pos.z, -pB.pos.y);
-        PVector pos = PVector.lerp(animPosA, animPosB, t);
-        
-        // Convert both quaternions to target coordinate system
-        float[] qA = {pA.quat[0], pA.quat[1], pA.quat[3], -pA.quat[2]};
-        float[] qB = {pB.quat[0], pB.quat[1], pB.quat[3], -pB.quat[2]};
-        float[] quat = slerp(qA, qB, t);
-        
-        // Normalize quaternion
-        float len = sqrt(quat[0]*quat[0] + quat[1]*quat[1] + 
-                        quat[2]*quat[2] + quat[3]*quat[3]);
-        quat[0] /= len;
-        quat[1] /= len;
-        quat[2] /= len;
-        quat[3] /= len;
-        
-        bone.animatedMatrix = quatToMatrix(quat);
-        bone.animatedMatrix.translate(
-            pos.x * scale, 
-            pos.y * scale, 
-            pos.z * scale
-        );
-    }
-
-    // Update global transforms (existing code remains)
-    for(Bone bone : bones) {
-        if(bone.parent == -1) {
-            bone.globalTransform = bone.animatedMatrix.get();
-        } else {
-            Bone parentBone = bones.get(bone.parent);
-            bone.globalTransform = parentBone.globalTransform.get();
-            bone.globalTransform.apply(bone.animatedMatrix);
-        }
-    }
+      }
+      // Update global transforms
+          for (Bone bone : bones) {
+              if (bone.parent == -1) {
+                  // Root bone: Global = Local
+                  bone.globalTransform = bone.animatedMatrix.get();
+              } else {
+                  // Child bone: Global = Parent Global * Local
+                  Bone parentBone = bones.get(bone.parent);
+                  bone.globalTransform = parentBone.globalTransform.get();
+                  bone.globalTransform.apply(bone.animatedMatrix);
+              }
+          }
 }
   
 float[] slerp(float[] qa, float[] qb, float t) {
@@ -457,56 +463,62 @@ float[] slerp(float[] qa, float[] qb, float t) {
     return qm;
 }
 
-  void computeInverseBindMatrices() {
-      // Process bones in hierarchical order
-      ArrayList<Bone> sortedBones = new ArrayList<>();
-      ArrayList<Bone> rootBones = new ArrayList<>();
-      
-      // Find root bones
-      for(Bone bone : bones) {
-          if(bone.parent == -1) {
-              rootBones.add(bone);
-          }
-      }
-      
-      // Recursively add children
-      for(Bone root : rootBones) {
-          sortedBones.add(root);
-          addChildrenRecursive(root, sortedBones);
-      }
-      
-      // Reassign bones list
-      bones = sortedBones;
-      println("\nBone Hierarchy:");
-      for(Bone b : bones) {
-          String parentName = (b.parent == -1) ? "None" : bones.get(b.parent).name;
-          println(b.name + " -> " + parentName);
-      }
-  
-      // Calculate global transforms
-      for(Bone bone : bones) {
-        if(bone.parent == -1) {
-          bone.globalTransform = bone.matrix.get();
-        } else {
-          Bone parentBone = bones.get(bone.parent);
-          bone.globalTransform = parentBone.globalTransform.get();
-          bone.globalTransform.apply(bone.matrix);
+void computeInverseBindMatrices() {
+    // Create processing order without modifying original bones list
+    ArrayList<Bone> processingOrder = new ArrayList<>();
+    ArrayList<Bone> rootBones = new ArrayList<>();
+    
+    // 1. Find root bones (using bone IDs)
+    for (Bone bone : bones) {
+        if (bone.parent == -1) {
+            rootBones.add(bone);
         }
-        bone.animatedMatrix = bone.matrix.get(); // Initialize animated matrix
+    }
+    
+    // 2. Recursively add children to processing order
+    for (Bone root : rootBones) {
+        processingOrder.add(root);
+        addChildrenRecursive(root, processingOrder);
+    }
+    
+    // 3. Compute global transforms using original list indices
+    for (Bone bone : processingOrder) {
+        if (bone.parent == -1) {
+            bone.globalTransform = bone.matrix.get();
+        } else {
+            // Get parent index using original bone ID mapping
+            Integer parentIndex = boneIdMap.get(bone.parent);
+            if (parentIndex == null || parentIndex >= bones.size()) {
+                println("Missing parent bone: " + bone.parent + " for " + bone.name);
+                continue;
+            }
+            Bone parent = bones.get(parentIndex);
+            bone.globalTransform = parent.globalTransform.get();
+            bone.globalTransform.apply(bone.matrix);
+        }
+        
+        // Calculate inverse bind matrix
         bone.inverseBindMatrix = bone.globalTransform.get();
         bone.inverseBindMatrix.invert();
-      }
     }
-  
-  
-  void addChildrenRecursive(Bone parent, ArrayList<Bone> sortedList) {
-      for(Bone bone : bones) {
-          if(bone.parent == parent.id) {
-              sortedList.add(bone);
-              addChildrenRecursive(bone, sortedList);
-          }
-      }
-  }
+    
+    println("\nBone Hierarchy:");
+    for (Bone b : processingOrder) {
+        String parentName = (b.parent == -1) ? 
+            "None" : bones.get(boneIdMap.get(b.parent)).name;
+        println(b.name + " -> " + parentName);
+    }
+}
+
+void addChildrenRecursive(Bone parent, ArrayList<Bone> processingOrder) {
+    // Match children by parent ID instead of list position
+    for (Bone bone : bones) {
+        if (bone.parent == parent.id) { // Compare IDs not indices
+            processingOrder.add(bone);
+            addChildrenRecursive(bone, processingOrder);
+        }
+    }
+}
   
   // Print Bone Matrix
   void printMatrix(PMatrix3D mat) {
@@ -532,11 +544,11 @@ float[] slerp(float[] qa, float[] qb, float t) {
     for(int i=0; i<vertSec.count; i++) {
       int off = vertSec.offset + i*stride;
       
-      PVector pos = new PVector(
-          readFloat4(data, off) * scale,
-          readFloat4(data, off+4) * scale,    // Y remains Y
-          readFloat4(data, off+8) * -scale    // Z becomes -Z
-      );
+    PVector pos = new PVector(
+        readFloat4(data, off) * scale,       // X
+        readFloat4(data, off + 4) * scale,   // Y
+        readFloat4(data, off + 8) * -scale   // Z
+    );
       
       PVector uv = new PVector(0, 0);
       if(stride >= 16) {
@@ -579,41 +591,51 @@ float[] slerp(float[] qa, float[] qb, float t) {
     }
     println("Successfully loaded",triangles.size(),"triangles");
       
-  Section weightSec = sections.get(17);
-  if (weightSec != null) {
-    int weightSize = weightSec.byteLength / weightSec.count;
-    for (int i=0; i<weightSec.count; i++) {
-      int off = weightSec.offset + i*weightSize;
-      ArrayList<VertexWeight> vWeights = new ArrayList<>();
-  
-      // Read 4 bone IDs (1 byte each) followed by 4 weights (2 bytes each)
-      for (int j=0; j<4; j++) {
-        int boneId = data[off+j] & 0xFF; // 1-byte bone IDs
-        Integer boneIndex = this.boneIdMap.get(boneId);
-        
-        if (boneIndex == null) {
-          println("Missing bone mapping for ID: " + boneId);
-          continue;
+    Section weightSec = sections.get(17);
+    if (weightSec != null) {
+        int weightSize = weightSec.byteLength / weightSec.count;
+        for (int i = 0; i < weightSec.count; i++) {
+            int off = weightSec.offset + i * weightSize;
+            ArrayList<VertexWeight> vWeights = new ArrayList<>();
+
+            // Read 4 bone IDs (1 byte each) followed by 4 weights (2 bytes each)
+            float totalWeight = 0;
+            for (int j = 0; j < 4; j++) {
+                int boneId = data[off + j] & 0xFF; // 1-byte bone IDs
+                Integer boneIndex = this.boneIdMap.get(boneId);
+
+                if (boneIndex == null) {
+                    println("Missing bone mapping for ID: " + boneId);
+                    continue;
+                }
+
+                // Read weight (2 bytes per weight after 4 bone IDs)
+                int weightOffset = off + 4 + (j * 2);
+                int weightValue = readShort2(data, weightOffset) & 0xFFFF;
+                float weight = weightValue / 65535.0f;
+
+                if (weight > 0) {
+                    vWeights.add(new VertexWeight(boneIndex, weight));
+                    totalWeight += weight;
+                }
+            }
+
+            // Normalize weights to ensure they sum to 1.0
+            if (totalWeight > 0) {
+                for (VertexWeight w : vWeights) {
+                    w.weight /= totalWeight;
+                }
+            }
+
+            skinning.weights.add(vWeights);
         }
-  
-        // Read weight (2 bytes per weight after 4 bone IDs)
-        int weightOffset = off + 4 + (j * 2);
-        int weightValue = readShort2(data, weightOffset) & 0xFFFF;
-        float weight = weightValue / 65535.0f;
-  
-        if (weight > 0) {
-          vWeights.add(new VertexWeight(boneIndex, weight));
-        }
-      }
-      skinning.weights.add(vWeights);
-    }
     } else {
-      // Add empty weights if no weight section found
-      for (int i=0; i<vertices.size(); i++) {
-        skinning.weights.add(new ArrayList<VertexWeight>());
-      }
+        // Add empty weights if no weight section found
+        for (int i = 0; i < vertices.size(); i++) {
+            skinning.weights.add(new ArrayList<VertexWeight>());
+        }
     }
-    println("Loaded",vertices.size(),"vertices with",uvs.size(),"UV sets");
+    println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
   }
 
   void buildMesh() {
@@ -637,46 +659,50 @@ float[] slerp(float[] qa, float[] qb, float t) {
   }
 
   PMatrix3D quatToMatrix(float[] q) {
-    float w = q[0], x = q[1], y = q[2], z = q[3];
-    return new PMatrix3D(
-      1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w,   2*x*z + 2*y*w,   0,
-      2*x*y + 2*z*w,   1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w,   0,
-      2*x*z - 2*y*w,   2*y*z + 2*x*w,   1 - 2*x*x - 2*y*y, 0,
-      0, 0, 0, 1
-    );
+      float w = q[0], x = q[1], y = q[2], z = q[3];
+      return new PMatrix3D(
+          1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w,   2*x*z + 2*y*w,   0,
+          2*x*y + 2*z*w,   1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w,   0,
+          2*x*z - 2*y*w,   2*y*z + 2*x*w,   1 - 2*x*x - 2*y*y, 0,
+          0, 0, 0, 1
+      );
   }
 
-  void applySkinning() {
-    for(int i=0; i<vertices.size(); i++) {
-      PVector original = vertices.get(i);
-      PVector skinned = new PVector();
-      ArrayList<VertexWeight> weights = skinning.weights.get(i);
-      float totalWeight = 0;
+void applySkinning() {
+    for (int i = 0; i < vertices.size(); i++) {
+        PVector original = vertices.get(i);
+        PVector skinned = new PVector();
+        ArrayList<VertexWeight> weights = skinning.weights.get(i);
+        float totalWeight = 0;
 
-      for(VertexWeight w : weights) {
-        if(w.boneIndex >= bones.size()) continue;
-        Bone bone = bones.get(w.boneIndex);
-        
-        PMatrix3D skinningMatrix = bone.globalTransform.get();
-        skinningMatrix.apply(bone.inverseBindMatrix);
-        
-        PVector transformed = new PVector();
-        skinningMatrix.mult(original, transformed);
-        transformed.mult(w.weight);
-        skinned.add(transformed);
-        totalWeight += w.weight;
-      }
+        for (VertexWeight w : weights) {
+            if (w.boneIndex >= bones.size()) continue;
+            Bone bone = bones.get(w.boneIndex);
 
-      if(totalWeight > 0.001) {
-        skinned.mult(1.0/totalWeight);
-      } else {
-        skinned = original.copy();
-      }
-      
-      skinnedVerts.set(i, skinned);
+            // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
+            PMatrix3D skinningMatrix = new PMatrix3D();
+            skinningMatrix.apply(bone.globalTransform);
+            skinningMatrix.apply(bone.inverseBindMatrix);
+
+            // Transform vertex
+            PVector transformed = new PVector();
+            skinningMatrix.mult(original, transformed);
+            transformed.mult(w.weight);
+            skinned.add(transformed);
+            totalWeight += w.weight;
+        }
+
+        // Normalize if weights don't sum to 1.0
+        if (totalWeight > 0.001) {
+            skinned.mult(1.0 / totalWeight);
+        } else {
+            skinned = original.copy();
+        }
+
+        skinnedVerts.set(i, skinned);
     }
     updateMeshVertices();
-  }
+}
   
   void updateMeshVertices() {
       int vertexIndex = 0;
@@ -692,13 +718,56 @@ float[] slerp(float[] qa, float[] qb, float t) {
       }
   }
   
-  void printSummary() {
+void printSummary() {
     println("\nModel Summary:");
-    println("Vertices: "+vertices.size());
-    println("Triangles: "+triangles.size());
-    println("Bones: "+bones.size());
-    println("Materials: "+materials.size());
-  }
+    println("Vertices: " + vertices.size());
+    println("Triangles: " + triangles.size());
+    println("Bones: " + bones.size());
+    println("Materials: " + materials.size());
+
+    // Print bone positions from global transforms
+    println("Bone Positions:");
+    for (Bone bone : bones) {
+        float[] m = new float[16];
+        bone.globalTransform.get(m);
+        float x = m[3];  // Translation X (m03)
+        float y = m[7];  // Translation Y (m13)
+        float z = m[11]; // Translation Z (m23)
+        println(
+            "Bone: " + bone.name + 
+            " Position: " + nf(x, 1, 2) + " " + 
+            nf(y, 1, 2) + " " + nf(z, 1, 2)
+        );
+    }
+}
+
+void drawBones() {
+    fill(255, 255, 0); // Yellow
+    noStroke();
+    for (Bone bone : bones) {
+        float[] m = new float[16];
+        bone.globalTransform.get(m);
+        float x = m[3];  // Translation X (m03)
+        float y = m[7];  // Translation Y (m13)
+        float z = m[11]; // Translation Z (m23)
+
+        // TEMPORARY DEBUG PRINT
+        println("Bone:", bone.name, "Position:", x, y, z);
+
+        pushMatrix();
+        translate(x, y, z);
+        sphere(2);
+        popMatrix();
+
+        if (bone.parent != -1) {
+            Bone parent = bones.get(bone.parent);
+            float[] pm = new float[16];
+            parent.globalTransform.get(pm);
+            stroke(0, 255, 0);
+            line(x, y, z, pm[3], pm[7], pm[11]); // Draw line to parent bone
+        }
+    }
+}
 
   void draw() {
     updateAnimation();
