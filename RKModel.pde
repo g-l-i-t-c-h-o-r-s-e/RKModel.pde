@@ -330,6 +330,7 @@ class RKModel {
               pose.pos.y = -readShort2(data, offset+4) / 32.0; // Original Z becomes inverted Y
               offset += 6;
               
+              // Quaternion conversion: Swap Y and Z components and negate Y
               float w = readShort2(data, offset) / 32767.0;
               float x = (byte)data[offset+2] / 127.0;
               float y = (byte)data[offset+3] / 127.0;
@@ -407,7 +408,6 @@ class RKModel {
   
           // 1. Create rotation matrix from quaternion
           PMatrix3D rotationMatrix = quatToMatrix(quat);
-          //rotationMatrix.translate(pos.x, pos.y, pos.z);
           
           // 2. Apply translation to the rotated space
           PMatrix3D translationMatrix = new PMatrix3D();
@@ -502,6 +502,7 @@ void computeInverseBindMatrices() {
         bone.inverseBindMatrix.invert();
     }
     
+    // 4. (Optional) Print hierarchy
     println("\nBone Hierarchy:");
     for (Bone b : processingOrder) {
         String parentName = (b.parent == -1) ? 
@@ -681,8 +682,8 @@ void applySkinning() {
 
             // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
             PMatrix3D skinningMatrix = new PMatrix3D();
-            skinningMatrix.apply(bone.globalTransform);
             skinningMatrix.apply(bone.inverseBindMatrix);
+            skinningMatrix.apply(bone.globalTransform);  
 
             // Transform vertex
             PVector transformed = new PVector();
