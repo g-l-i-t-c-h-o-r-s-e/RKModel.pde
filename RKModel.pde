@@ -267,12 +267,16 @@ class RKModel {
               matrixData[2], matrixData[6], matrixData[10], matrixData[14],
               matrixData[3], matrixData[7], matrixData[11], matrixData[15]
           );
-  
-          // Apply scale and coordinate adjustment to translation components
-          //mat.m03 *= scale;    // X translation
-          //mat.m13 *= scale;    // Y translation
-          //mat.m23 *= -scale;   // Invert and scale Z translation
           
+          PMatrix3D axisCorrection = new PMatrix3D(
+              0, 0, -1, 0,  // X' = -Z (original forward becomes left)
+              0, 1, 0, 0,   // Y' = Y (up remains unchanged)
+              -1, 0, 0, 0,  // Z' = -X (original right becomes backward)
+              0, 0, 0, 1
+          );
+        
+          mat.preApply(axisCorrection);
+  
           String name = header.readString(data, off+76, 64);
           Bone bone = new Bone(id, parent, name);
           bone.matrix = mat;
@@ -330,10 +334,15 @@ class RKModel {
           for(int b=0; b<animationData.boneCount; b++) {
               BonePose pose = new BonePose();
               
-              // Position conversion: Swap Y and Z, invert Y (Z-up to Y-up)
-              pose.pos.x = readShort2(data, offset) / 32.0;
-              pose.pos.z = readShort2(data, offset+2) / 32.0; // Original Y becomes Z
-              pose.pos.y = -readShort2(data, offset+4) / 32.0; // Original Z becomes inverted Y
+              float origX = readShort2(data, offset) / 32.0f;
+              float origY = readShort2(data, offset+2) / 32.0f;
+              float origZ = readShort2(data, offset+4) / 32.0f;
+              
+              pose.pos.set(
+                  origX,     // X = original X (matches bone)
+                  origZ,     // Y = original Z (vertical)
+                  -origY    // Z = original -Y (depth)
+              );
               offset += 6;
               
               // Quaternion conversion: Swap Y and Z components and negate Y
@@ -343,10 +352,11 @@ class RKModel {
               float z = (byte)data[offset+4] / 127.0;
               offset += 5;
               
-              pose.quat[0] = w;
-              pose.quat[1] = x;
-              pose.quat[2] = -z;  // Negate Z for left-handedness
-              pose.quat[3] = y;   // Original Y becomes Z
+              // With quaternion axis swap:
+              pose.quat[0] = w;           // W unchanged
+              pose.quat[1] = x;           // X unchanged
+              pose.quat[2] = y;           // Y → Z
+              pose.quat[3] = -z;          // Z → -Y
               
               frame.bones.add(pose);
           }
@@ -395,9 +405,18 @@ class RKModel {
           BonePose pA = poseA.bones.get(boneId);
           BonePose pB = poseB.bones.get(boneId);
   
-          // Position interpolation (existing code remains)
-          PVector animPosA = new PVector(pA.pos.x, pA.pos.z, -pA.pos.y);
-          PVector animPosB = new PVector(pB.pos.x, pB.pos.z, -pB.pos.y);
+          PVector animPosA = new PVector(
+              pA.pos.x, 
+              pA.pos.y, 
+              pA.pos.z
+          );
+          
+          PVector animPosB = new PVector(
+              pB.pos.x,
+              pB.pos.y,
+              pB.pos.z
+          );
+          
           PVector pos = PVector.lerp(animPosA, animPosB, t);
   
           // Convert quaternions and interpolate
@@ -555,11 +574,11 @@ void addChildrenRecursive(Bone parent, ArrayList<Bone> processingOrder) {
     for(int i=0; i<vertSec.count; i++) {
       int off = vertSec.offset + i*stride;
       
-    PVector pos = new PVector(
-        readFloat4(data, off) * scale,       // X
-        readFloat4(data, off + 4) * scale,   // Y
-        readFloat4(data, off + 8) * -scale   // Z
-    );
+      PVector pos = new PVector(
+          readFloat4(data, off),      // X = original X
+          readFloat4(data, off + 8),  // Y = original Z (model's up → Processing's up)
+          -readFloat4(data, off + 4)  // Z = -original Y (model's forward → Processing's backward)
+      );
       
       PVector uv = new PVector(0, 0);
       if(stride >= 16) {
