@@ -183,6 +183,8 @@ class RKModel {
   ArrayList<PVector> uvs = new ArrayList<>();
   ArrayList<int[]> triangles = new ArrayList<>();
   ArrayList<Bone> bones = new ArrayList<>();
+  ArrayList<Bone> processingOrder; // = new ArrayList<>();
+  ArrayList<Bone> rootBones; // = new ArrayList<>();
   HashMap<Integer, Integer> boneIdMap;
   ArrayList<String> materials = new ArrayList<>();
   SkinningData skinning = new SkinningData();
@@ -266,6 +268,10 @@ class RKModel {
               matrixData[3], matrixData[7], matrixData[11], matrixData[15]
           );
   
+          // Apply scale and coordinate adjustment to translation components
+          //mat.m03 *= scale;    // X translation
+          //mat.m13 *= scale;    // Y translation
+          //mat.m23 *= -scale;   // Invert and scale Z translation
           
           String name = header.readString(data, off+76, 64);
           Bone bone = new Bone(id, parent, name);
@@ -419,18 +425,20 @@ class RKModel {
           //bone.animatedMatrix = rotationMatrix;
 
       }
-      // Update global transforms
-          for (Bone bone : bones) {
-              if (bone.parent == -1) {
-                  // Root bone: Global = Local
-                  bone.globalTransform = bone.animatedMatrix.get();
-              } else {
-                  // Child bone: Global = Parent Global * Local
-                  Bone parentBone = bones.get(bone.parent);
-                  bone.globalTransform = parentBone.globalTransform.get();
+      
+      // Update global transforms using processingOrder
+      for (Bone bone : processingOrder) {
+          if (bone.parent == -1) {
+              bone.globalTransform = bone.animatedMatrix.get();
+          } else {
+              Integer parentIndex = boneIdMap.get(bone.parent);
+              if (parentIndex != null) {
+                  Bone parentBone = bones.get(parentIndex);
+                  bone.globalTransform.set(parentBone.globalTransform);
                   bone.globalTransform.apply(bone.animatedMatrix);
               }
           }
+      }
 }
   
 float[] slerp(float[] qa, float[] qb, float t) {
@@ -501,6 +509,8 @@ void computeInverseBindMatrices() {
         bone.inverseBindMatrix = bone.globalTransform.get();
         bone.inverseBindMatrix.invert();
     }
+    
+    this.processingOrder = processingOrder; // Store the processing order
     
     // 4. (Optional) Print hierarchy
     println("\nBone Hierarchy:");
@@ -742,33 +752,33 @@ void printSummary() {
     }
 }
 
-void drawBones() {
-    fill(255, 255, 0); // Yellow
-    noStroke();
-    for (Bone bone : bones) {
-        float[] m = new float[16];
-        bone.globalTransform.get(m);
-        float x = m[3];  // Translation X (m03)
-        float y = m[7];  // Translation Y (m13)
-        float z = m[11]; // Translation Z (m23)
-
-        // TEMPORARY DEBUG PRINT
-        println("Bone:", bone.name, "Position:", x, y, z);
-
-        pushMatrix();
-        translate(x, y, z);
-        sphere(2);
-        popMatrix();
-
-        if (bone.parent != -1) {
-            Bone parent = bones.get(bone.parent);
-            float[] pm = new float[16];
-            parent.globalTransform.get(pm);
-            stroke(0, 255, 0);
-            line(x, y, z, pm[3], pm[7], pm[11]); // Draw line to parent bone
-        }
-    }
-}
+  void drawBones() {
+      fill(255, 255, 0); // Yellow
+      noStroke();
+      for (Bone bone : bones) {
+          float[] m = new float[16];
+          bone.globalTransform.get(m);
+          float x = m[3];  // Translation X (m03)
+          float y = m[7];  // Translation Y (m13)
+          float z = m[11]; // Translation Z (m23)
+  
+          // TEMPORARY DEBUG PRINT
+          println("Bone:", bone.name, "Position:", x, y, z);
+  
+          pushMatrix();
+          translate(x, y, z);
+          sphere(2);
+          popMatrix();
+  
+          if (bone.parent != -1) {
+              Bone parent = bones.get(bone.parent);
+              float[] pm = new float[16];
+              parent.globalTransform.get(pm);
+              stroke(0, 255, 0);
+              line(x, y, z, pm[3], pm[7], pm[11]); // Draw line to parent bone
+          }
+      }
+  }
 
   void draw() {
     updateAnimation();
