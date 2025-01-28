@@ -394,30 +394,73 @@ class RKModel {
     println("Bones: " + bones.size());
   }
 
-  void drawBones() {
-      fill(255, 255, 0);
-      noStroke();
-      for (Bone bone : bones) {
-          float[] m = new float[16];
-          bone.globalTransform.get(m);
-          float x = m[3];
-          float y = m[7];
-          float z = m[11];
+void drawBones() {
+    // First pass: Draw all bones and store their screen positions
+    ArrayList<PVector> boneScreenPositions = new ArrayList<>();
+    for (Bone bone : bones) {
+        float[] m = new float[16];
+        bone.globalTransform.get(m);
+        float x = m[3];
+        float y = m[7];
+        float z = m[11];
 
-          pushMatrix();
-          translate(x, y, z);
-          sphere(2);
-          popMatrix();
+        // Store screen position
+        PVector screenPos = new PVector(screenX(x, y, z), screenY(x, y, z), screenZ(x, y, z));
+        boneScreenPositions.add(screenPos);
 
-          if (bone.parent != -1) {
-              Bone parent = bones.get(boneIdMap.get(bone.parent));
-              float[] pm = new float[16];
-              parent.globalTransform.get(pm);
-              stroke(0, 255, 0);
-              line(x, y, z, pm[3], pm[7], pm[11]);
-          }
-      }
-  }
+        // Draw bone sphere
+        pushMatrix();
+        translate(x, y, z);
+        sphere(2);
+        popMatrix();
+
+        // Draw bone connection
+        if (bone.parent != -1) {
+            Bone parent = bones.get(boneIdMap.get(bone.parent));
+            float[] pm = new float[16];
+            parent.globalTransform.get(pm);
+            float px = pm[3];
+            float py = pm[7];
+            float pz = pm[11];
+            stroke(0, 255, 0);
+            line(x, y, z, px, py, pz);
+        }
+    }
+
+    // Second pass: Draw text labels and check hover
+    for (int i = 0; i < bones.size(); i++) {
+        Bone bone = bones.get(i);
+        PVector screenPos = boneScreenPositions.get(i);
+        
+        // Check if mouse is near the bone (within 10 pixels)
+        float distToMouse = dist(mouseX, mouseY, screenPos.x, screenPos.y);
+        boolean isHovered = distToMouse < 10 && screenPos.z > 0;
+
+        if (isHovered) {
+            // Print to console when hovered
+            println("Hovering over bone:", bone.name);
+            
+            // Draw text label
+            pushMatrix();
+            pushStyle();
+            
+            // Important: Disable depth test for text
+            hint(DISABLE_DEPTH_TEST);
+            textSize(12);
+            fill(255, 255, 0); // Yellow text
+            textAlign(CENTER, BOTTOM);
+            
+            // Convert to screen space properly
+            float textX = screenPos.x;
+            float textY = screenPos.y - 15; // Offset above bone
+            
+            text(bone.name, textX, textY);
+            hint(ENABLE_DEPTH_TEST);
+            popStyle();
+            popMatrix();
+        }
+    }
+}
 
   void draw() {
     pushMatrix();
