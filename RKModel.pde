@@ -145,52 +145,54 @@ class RKModel {
     }
   }
 
-  void loadBones(byte[] data) {
-      Section boneSec = sections.get(7);
-      if (boneSec == null) return;
-  
-      this.boneIdMap = new HashMap<>();
-      int boneSize = 140;
-  
-      PMatrix3D axisCorrection = new PMatrix3D(
-          0, 0, -1, 0,
-          0, 1, 0, 0,
-          -1, 0, 0, 0,
-          0, 0, 0, 1
-      );
-  
-      for (int i = 0; i < boneSec.count; i++) {
-          int off = boneSec.offset + i * boneSize;
-          int parentId = readInt4(data, off);
-          parentId = parentId == 0xFFFFFFFF ? -1 : parentId;
-  
-          int id = readInt4(data, off + 4);
-          float[] matrixData = new float[16];
-          for (int j = 0; j < 16; j++) {
-              matrixData[j] = readFloat4(data, off + 12 + j * 4);
-          }
-  
-          PMatrix3D mat = new PMatrix3D(
-              matrixData[0], matrixData[1], matrixData[2], matrixData[3],
-              matrixData[4], matrixData[5], matrixData[6], matrixData[7],
-              matrixData[8], matrixData[9], matrixData[10], matrixData[11],
-              matrixData[12], matrixData[13], matrixData[14], matrixData[15]
-          );
-  
-          mat.preApply(axisCorrection);
-  
-          String name = header.readString(data, off + 76, 64);
-          Bone bone = new Bone(id, parentId, name);
-          bone.matrix = mat;
-          bones.add(bone);
-          boneIdMap.put(id, i);
-  
-          // Debug print to verify parent-child relationships
-          println("Bone ID: " + id + ", Parent ID: " + parentId + ", Name: " + name);
-      }
-  }
+void loadBones(byte[] data) {
+    Section boneSec = sections.get(7);
+    if (boneSec == null) return;
 
-  void computeInverseBindMatrices() {
+    this.boneIdMap = new HashMap<>();
+    int boneSize = 140;
+
+    //rotate matrix 90 degrees around Z-axis + DOWNSCALE X-axis to 0.1?! OK THEN
+    PMatrix3D axisCorrection = new PMatrix3D(
+        0, -1, 0, 0,
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    );
+    axisCorrection.scale(0.1, 0.1, 0.1); // Scale X-axis by 0.5
+
+    for (int i = 0; i < boneSec.count; i++) {
+        int off = boneSec.offset + i * boneSize;
+        int parentId = readInt4(data, off);
+        parentId = parentId == 0xFFFFFFFF ? -1 : parentId;
+
+        int id = readInt4(data, off + 4);
+        float[] matrixData = new float[16];
+        for (int j = 0; j < 16; j++) {
+            matrixData[j] = readFloat4(data, off + 12 + j * 4);
+        }
+
+        PMatrix3D mat = new PMatrix3D(
+            matrixData[0], matrixData[1], matrixData[2], matrixData[3],
+            matrixData[4], matrixData[5], matrixData[6], matrixData[7],
+            matrixData[8], matrixData[9], matrixData[10], matrixData[11],
+            matrixData[12], matrixData[13], matrixData[14], matrixData[15]
+        );
+
+        mat.preApply(axisCorrection);
+
+        String name = header.readString(data, off + 76, 64);
+        Bone bone = new Bone(id, parentId, name);
+        bone.matrix = mat;
+        bones.add(bone);
+        boneIdMap.put(id, i);
+
+        // Debug print to verify parent-child relationships
+        println("Bone ID: " + id + ", Parent ID: " + parentId + ", Name: " + name);
+    }
+}
+
+void computeInverseBindMatrices() {
     processingOrder = new ArrayList<>();
     rootBones = new ArrayList<>();
     
@@ -217,10 +219,28 @@ class RKModel {
             }
         }
         
+        // Debug print
+        println("Bone: " + bone.name);
+        println("Local Matrix:");
+        printMatrix(bone.matrix);
+        println("Global Matrix:");
+        printMatrix(bone.globalTransform);
+        
         bone.inverseBindMatrix = bone.globalTransform.get();
         bone.inverseBindMatrix.invert();
     }
-  }
+}
+
+void printMatrix(PMatrix3D matrix) {
+    float[] m = new float[16];
+    matrix.get(m);
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            print(m[i * 4 + j] + " ");
+        }
+        println();
+    }
+}
 
   void addChildrenRecursive(Bone parent, ArrayList<Bone> processingOrder) {
     for (Bone bone : bones) {
