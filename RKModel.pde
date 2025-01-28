@@ -146,45 +146,48 @@ class RKModel {
   }
 
   void loadBones(byte[] data) {
-    Section boneSec = sections.get(7);
-    if(boneSec == null) return;
-
-    this.boneIdMap = new HashMap<>(); 
-    int boneSize = 140;
-
-    for(int i=0; i<boneSec.count; i++) {
-        int off = boneSec.offset + i*boneSize;
-        int parent = readInt4(data, off);
-        parent = parent == 0xFFFFFFFF ? -1 : parent;
-
-        int id = readInt4(data, off + 4);
-        float[] matrixData = new float[16];
-        for(int j=0; j<16; j++) {
-            matrixData[j] = readFloat4(data, off+12 + j*4);
-        }
-
-        PMatrix3D mat = new PMatrix3D(
-            matrixData[0], matrixData[4], matrixData[8], matrixData[12],
-            matrixData[1], matrixData[5], matrixData[9], matrixData[13],
-            matrixData[2], matrixData[6], matrixData[10], matrixData[14],
-            matrixData[3], matrixData[7], matrixData[11], matrixData[15]
-        );
-        
-        PMatrix3D axisCorrection = new PMatrix3D(
-            0, 0, -1, 0,
-            0, 1, 0, 0,
-            -1, 0, 0, 0,
-            0, 0, 0, 1
-        );
-      
-        mat.preApply(axisCorrection);
-
-        String name = header.readString(data, off+76, 64);
-        Bone bone = new Bone(id, parent, name);
-        bone.matrix = mat;
-        bones.add(bone);
-        boneIdMap.put(id, i);
-    }
+      Section boneSec = sections.get(7);
+      if (boneSec == null) return;
+  
+      this.boneIdMap = new HashMap<>();
+      int boneSize = 140;
+  
+      PMatrix3D axisCorrection = new PMatrix3D(
+          0, 0, -1, 0,
+          0, 1, 0, 0,
+          -1, 0, 0, 0,
+          0, 0, 0, 1
+      );
+  
+      for (int i = 0; i < boneSec.count; i++) {
+          int off = boneSec.offset + i * boneSize;
+          int parentId = readInt4(data, off);
+          parentId = parentId == 0xFFFFFFFF ? -1 : parentId;
+  
+          int id = readInt4(data, off + 4);
+          float[] matrixData = new float[16];
+          for (int j = 0; j < 16; j++) {
+              matrixData[j] = readFloat4(data, off + 12 + j * 4);
+          }
+  
+          PMatrix3D mat = new PMatrix3D(
+              matrixData[0], matrixData[1], matrixData[2], matrixData[3],
+              matrixData[4], matrixData[5], matrixData[6], matrixData[7],
+              matrixData[8], matrixData[9], matrixData[10], matrixData[11],
+              matrixData[12], matrixData[13], matrixData[14], matrixData[15]
+          );
+  
+          mat.preApply(axisCorrection);
+  
+          String name = header.readString(data, off + 76, 64);
+          Bone bone = new Bone(id, parentId, name);
+          bone.matrix = mat;
+          bones.add(bone);
+          boneIdMap.put(id, i);
+  
+          // Debug print to verify parent-child relationships
+          println("Bone ID: " + id + ", Parent ID: " + parentId + ", Name: " + name);
+      }
   }
 
   void computeInverseBindMatrices() {
@@ -239,8 +242,8 @@ class RKModel {
       
       PVector pos = new PVector(
           readFloat4(data, off),
-          readFloat4(data, off + 8),
-          -readFloat4(data, off + 4)
+          readFloat4(data, off + 4),
+          readFloat4(data, off + 8)
       );
       
       PVector uv = new PVector(0, 0);
@@ -394,30 +397,74 @@ class RKModel {
     println("Bones: " + bones.size());
   }
 
-  void drawBones() {
-      fill(255, 255, 0);
-      noStroke();
-      for (Bone bone : bones) {
-          float[] m = new float[16];
-          bone.globalTransform.get(m);
-          float x = m[3];
-          float y = m[7];
-          float z = m[11];
+void drawBones() {
+    // Track closest bone under mouse
+    Bone hoveredBone = null;
+    float closestDistance = Float.MAX_VALUE;
+    
+    // First pass: Calculate screen positions and find closest
+    ArrayList<PVector> boneScreenPositions = new ArrayList<>();
+    for (Bone bone : bones) {
+        float[] m = new float[16];
+        bone.globalTransform.get(m);
+        float x = m[12];
+        float y = m[13];
+        float z = m[14];
 
-          pushMatrix();
-          translate(x, y, z);
-          sphere(2);
-          popMatrix();
+        // Get screen position
+        PVector screenPos = new PVector(
+            screenX(x, y, z),
+            screenY(x, y, z),
+            screenZ(x, y, z)
+        );
+        boneScreenPositions.add(screenPos);
 
-          if (bone.parent != -1) {
-              Bone parent = bones.get(boneIdMap.get(bone.parent));
-              float[] pm = new float[16];
-              parent.globalTransform.get(pm);
-              stroke(0, 255, 0);
-              line(x, y, z, pm[3], pm[7], pm[11]);
-          }
-      }
-  }
+        // Skip bones behind camera
+        if (screenPos.z <= 0) continue;
+
+        // Calculate 2D distance to mouse
+        float distToMouse = dist(mouseX, mouseY, screenPos.x, screenPos.y);
+        
+        // Track closest bone within threshold
+        if (distToMouse < 10 && distToMouse < closestDistance) {
+            closestDistance = distToMouse;
+            hoveredBone = bone;
+        }
+
+        // Draw bone visuals (unchanged)
+        pushMatrix();
+        translate(x, y, z);
+        sphere(2);
+        popMatrix();
+
+        if (bone.parent != -1) {
+            Bone parent = bones.get(boneIdMap.get(bone.parent));
+            float[] pm = new float[16];
+            parent.globalTransform.get(pm);
+            float px = pm[12];
+            float py = pm[13];
+            float pz = pm[14];
+            stroke(0, 255, 0);
+            line(x, y, z, px, py, pz);
+        }
+    }
+
+    // Print hovered bone name
+    if (hoveredBone != null) {
+        println("Current bone:", hoveredBone.name);
+        
+        // Draw label for closest bone
+        PVector screenPos = boneScreenPositions.get(bones.indexOf(hoveredBone));
+        pushStyle();
+        hint(DISABLE_DEPTH_TEST);
+        textSize(12);
+        fill(255, 255, 0);
+        textAlign(CENTER, BOTTOM);
+        text(hoveredBone.name, screenPos.x, screenPos.y - 15);
+        hint(ENABLE_DEPTH_TEST);
+        popStyle();
+    }
+}
 
   void draw() {
     pushMatrix();
