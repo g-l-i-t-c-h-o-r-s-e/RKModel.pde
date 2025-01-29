@@ -102,6 +102,7 @@ class RKModel {
   SkinningData skinning = new SkinningData();
   PShape mesh;
   PImage texture;
+  float scale = 5;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
 
   RKModel(String filename, PImage tex) {
@@ -151,15 +152,14 @@ void loadBones(byte[] data) {
 
     this.boneIdMap = new HashMap<>();
     int boneSize = 140;
-
-    //rotate matrix 90 degrees around Z-axis + DOWNSCALE X-axis to 0.1?! OK THEN
+    //rotate matrix 90 degrees around Z-axis
     PMatrix3D axisCorrection = new PMatrix3D(
         0, -1, 0, 0,
         1, 0, 0, 0,
         0, 0, 1, 0,
         0, 0, 0, 1
     );
-    axisCorrection.scale(0.1, 0.1, 0.1); // Scale X-axis by 0.5
+    axisCorrection.scale(scale / (scale * 1000), scale / (scale * 1000), scale / (scale * 1000)); //workaround required to make the mesh and skeleton align
 
     for (int i = 0; i < boneSec.count; i++) {
         int off = boneSec.offset + i * boneSize;
@@ -195,30 +195,33 @@ void loadBones(byte[] data) {
 void computeInverseBindMatrices() {
     processingOrder = new ArrayList<>();
     rootBones = new ArrayList<>();
-    
+
     for (Bone bone : bones) {
         if (bone.parent == -1) {
             rootBones.add(bone);
         }
     }
-    
+
     for (Bone root : rootBones) {
         processingOrder.add(root);
         addChildrenRecursive(root, processingOrder);
     }
-    
+
     for (Bone bone : processingOrder) {
         if (bone.parent == -1) {
             bone.globalTransform = bone.matrix.get();
+            // Apply scale to root bones
+            bone.globalTransform.scale(scale);
         } else {
             Integer parentIndex = boneIdMap.get(bone.parent);
             if (parentIndex != null && parentIndex < bones.size()) {
                 Bone parent = bones.get(parentIndex);
                 bone.globalTransform = parent.globalTransform.get();
                 bone.globalTransform.apply(bone.matrix);
+                // Apply scale to child bones
+                bone.globalTransform.scale(scale);
             }
         }
-        
         // Debug print
         println("Bone: " + bone.name);
         println("Local Matrix:");
@@ -261,9 +264,9 @@ void printMatrix(PMatrix3D matrix) {
       int off = vertSec.offset + i*stride;
       
       PVector pos = new PVector(
-          readFloat4(data, off),
-          readFloat4(data, off + 4),
-          readFloat4(data, off + 8)
+          readFloat4(data, off) * scale,
+          readFloat4(data, off + 4) * scale,
+          readFloat4(data, off + 8) * scale
       );
       
       PVector uv = new PVector(0, 0);
