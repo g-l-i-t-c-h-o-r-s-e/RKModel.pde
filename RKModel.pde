@@ -102,8 +102,11 @@ class RKModel {
   SkinningData skinning = new SkinningData();
   PShape mesh;
   PImage texture;
-  float scale = 5;
+  float scale = 3;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
+  Bone selectedBone = null;
+  PVector initialBonePos = new PVector();
+  PVector cameraRight, cameraUp;
 
   RKModel(String filename, PImage tex) {
     byte[] data = loadBytes(filename);
@@ -146,104 +149,137 @@ class RKModel {
     }
   }
 
-void loadBones(byte[] data) {
-    Section boneSec = sections.get(7);
-    if (boneSec == null) return;
+  void loadBones(byte[] data) {
+      Section boneSec = sections.get(7);
+      if (boneSec == null) return;
+  
+      this.boneIdMap = new HashMap<>();
+      int boneSize = 140;
+      // Rotate matrix 90 degrees around Z-axis
+      PMatrix3D axisCorrection = new PMatrix3D(
+          0, -1, 0, 0,
+          1, 0, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1
+      );
+      // Apply the scaling factor to axisCorrection
+      axisCorrection.scale(scale / (scale * 1000));
+  
+      for (int i = 0; i < boneSec.count; i++) {
+          int off = boneSec.offset + i * boneSize;
+          int parentId = readInt4(data, off);
+          parentId = parentId == 0xFFFFFFFF ? -1 : parentId;
+  
+          int id = readInt4(data, off + 4);
+          float[] matrixData = new float[16];
+          for (int j = 0; j < 16; j++) {
+              matrixData[j] = readFloat4(data, off + 12 + j * 4);
+          }
+  
+          PMatrix3D mat = new PMatrix3D(
+              matrixData[0], matrixData[1], matrixData[2], matrixData[3],
+              matrixData[4], matrixData[5], matrixData[6], matrixData[7],
+              matrixData[8], matrixData[9], matrixData[10], matrixData[11],
+              matrixData[12], matrixData[13], matrixData[14], matrixData[15]
+          );
+  
+          normalizeScaling(mat); // Normalize scaling in the bone's local matrix
+          mat.preApply(axisCorrection); // Apply axisCorrection after normalization
+          mat.scale(scale); // Synchronize scaling between mesh and skeleton
+  
+          String name = header.readString(data, off + 76, 64);
+          Bone bone = new Bone(id, parentId, name);
+          bone.matrix = mat;
+          bones.add(bone);
+          boneIdMap.put(id, i);
+  
+          // Debug print to verify scaling
+          println("Bone ID: " + id + ", Name: " + name);
+          printMatrix("Local Matrix", bone.matrix);
+      }
+  }
 
-    this.boneIdMap = new HashMap<>();
-    int boneSize = 140;
-    //rotate matrix 90 degrees around Z-axis
-    PMatrix3D axisCorrection = new PMatrix3D(
-        0, -1, 0, 0,
-        1, 0, 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-    );
-    axisCorrection.scale(scale / (scale * 1000), scale / (scale * 1000), scale / (scale * 1000)); //workaround required to make the mesh and skeleton align
+  void normalizeScaling(PMatrix3D matrix) {
+      float[] m = new float[16];
+      matrix.get(m);
+  
+      // Extract scaling factors
+      float sx = sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+      float sy = sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+      float sz = sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+  
+      // Normalize the matrix to remove unintended scaling
+      if (sx != 0) {
+          m[0] /= sx;
+          m[1] /= sx;
+          m[2] /= sx;
+      }
+      if (sy != 0) {
+          m[4] /= sy;
+          m[5] /= sy;
+          m[6] /= sy;
+      }
+      if (sz != 0) {
+          m[8] /= sz;
+          m[9] /= sz;
+          m[10] /= sz;
+      }
+  
+      matrix.set(m);
+  }
 
-    for (int i = 0; i < boneSec.count; i++) {
-        int off = boneSec.offset + i * boneSize;
-        int parentId = readInt4(data, off);
-        parentId = parentId == 0xFFFFFFFF ? -1 : parentId;
-
-        int id = readInt4(data, off + 4);
-        float[] matrixData = new float[16];
-        for (int j = 0; j < 16; j++) {
-            matrixData[j] = readFloat4(data, off + 12 + j * 4);
-        }
-
-        PMatrix3D mat = new PMatrix3D(
-            matrixData[0], matrixData[1], matrixData[2], matrixData[3],
-            matrixData[4], matrixData[5], matrixData[6], matrixData[7],
-            matrixData[8], matrixData[9], matrixData[10], matrixData[11],
-            matrixData[12], matrixData[13], matrixData[14], matrixData[15]
-        );
-
-        mat.preApply(axisCorrection);
-
-        String name = header.readString(data, off + 76, 64);
-        Bone bone = new Bone(id, parentId, name);
-        bone.matrix = mat;
-        bones.add(bone);
-        boneIdMap.put(id, i);
-
-        // Debug print to verify parent-child relationships
-        println("Bone ID: " + id + ", Parent ID: " + parentId + ", Name: " + name);
-    }
-}
-
-void computeInverseBindMatrices() {
-    processingOrder = new ArrayList<>();
-    rootBones = new ArrayList<>();
-
-    for (Bone bone : bones) {
-        if (bone.parent == -1) {
-            rootBones.add(bone);
-        }
-    }
-
-    for (Bone root : rootBones) {
-        processingOrder.add(root);
-        addChildrenRecursive(root, processingOrder);
-    }
-
-    for (Bone bone : processingOrder) {
-        if (bone.parent == -1) {
-            bone.globalTransform = bone.matrix.get();
-            // Apply scale to root bones
-            bone.globalTransform.scale(scale);
-        } else {
-            Integer parentIndex = boneIdMap.get(bone.parent);
-            if (parentIndex != null && parentIndex < bones.size()) {
-                Bone parent = bones.get(parentIndex);
-                bone.globalTransform = parent.globalTransform.get();
-                bone.globalTransform.apply(bone.matrix);
-                // Apply scale to child bones
-                bone.globalTransform.scale(scale);
-            }
-        }
-        // Debug print
-        println("Bone: " + bone.name);
-        println("Local Matrix:");
-        printMatrix(bone.matrix);
-        println("Global Matrix:");
-        printMatrix(bone.globalTransform);
-        
-        bone.inverseBindMatrix = bone.globalTransform.get();
-        bone.inverseBindMatrix.invert();
-    }
-}
-
-void printMatrix(PMatrix3D matrix) {
-    float[] m = new float[16];
-    matrix.get(m);
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            print(m[i * 4 + j] + " ");
-        }
-        println();
-    }
-}
+  void computeInverseBindMatrices() {
+      processingOrder = new ArrayList<>();
+      rootBones = new ArrayList<>();
+  
+      // Find root bones
+      for (Bone bone : bones) {
+          if (bone.parent == -1) {
+              rootBones.add(bone);
+          }
+      }
+  
+      // Compute global transforms
+      for (Bone root : rootBones) {
+          processingOrder.add(root);
+          addChildrenRecursive(root, processingOrder);
+      }
+  
+      for (Bone bone : processingOrder) {
+          if (bone.parent == -1) {
+              // Root bone: global transform = local transform
+              bone.globalTransform = bone.matrix.get();
+          } else {
+              // Child bone: global transform = parent's global transform * local transform
+              Integer parentIndex = boneIdMap.get(bone.parent);
+              if (parentIndex != null && parentIndex < bones.size()) {
+                  Bone parent = bones.get(parentIndex);
+                  bone.globalTransform = parent.globalTransform.get();
+                  bone.globalTransform.apply(bone.matrix);
+              }
+          }
+  
+          // Compute inverse bind matrix
+          bone.inverseBindMatrix = bone.globalTransform.get();
+          bone.inverseBindMatrix.invert();
+  
+          // Debug print
+          println("Bone: " + bone.name);
+          printMatrix("Global Transform", bone.globalTransform);
+      }
+  }
+  
+  void printMatrix(String label, PMatrix3D matrix) {
+      float[] m = new float[16];
+      matrix.get(m);
+      println(label + ":");
+      for (int i = 0; i < 4; i++) {
+          for (int j = 0; j < 4; j++) {
+              print(m[i * 4 + j] + " ");
+          }
+          println();
+      }
+  }
 
   void addChildrenRecursive(Bone parent, ArrayList<Bone> processingOrder) {
     for (Bone bone : bones) {
@@ -420,79 +456,137 @@ void printMatrix(PMatrix3D matrix) {
     println("Bones: " + bones.size());
   }
 
-void drawBones() {
-    // Track closest bone under mouse
-    Bone hoveredBone = null;
-    float closestDistance = Float.MAX_VALUE;
-    
-    // First pass: Calculate screen positions and find closest
-    ArrayList<PVector> boneScreenPositions = new ArrayList<>();
-    for (Bone bone : bones) {
-        float[] m = new float[16];
-        bone.globalTransform.get(m);
-        float x = m[12];
-        float y = m[13];
-        float z = m[14];
+  void drawBones() {
+      // Track closest bone under mouse
+      Bone hoveredBone = null;
+      float closestDistance = Float.MAX_VALUE;
+      
+      // First pass: Calculate screen positions and find closest
+      ArrayList<PVector> boneScreenPositions = new ArrayList<>();
+      for (Bone bone : bones) {
+          float[] m = new float[16];
+          bone.globalTransform.get(m);
+          float x = m[12];
+          float y = m[13];
+          float z = m[14];
+  
+          // Get screen position
+          PVector screenPos = new PVector(
+              screenX(x, y, z),
+              screenY(x, y, z),
+              screenZ(x, y, z)
+          );
+          boneScreenPositions.add(screenPos);
+  
+          // Skip bones behind camera
+          if (screenPos.z <= 0) continue;
+  
+          // Calculate 2D distance to mouse
+          float distToMouse = dist(mouseX, mouseY, screenPos.x, screenPos.y);
+          
+          // Track closest bone within threshold
+          if (distToMouse < 10 && distToMouse < closestDistance) {
+              closestDistance = distToMouse;
+              hoveredBone = bone;
+          }
+  
+          // Draw bone visuals (unchanged)
+          pushMatrix();
+          translate(x, y, z);
+          sphere(2);
+          popMatrix();
+  
+          if (bone.parent != -1) {
+              Bone parent = bones.get(boneIdMap.get(bone.parent));
+              float[] pm = new float[16];
+              parent.globalTransform.get(pm);
+              float px = pm[12];
+              float py = pm[13];
+              float pz = pm[14];
+              stroke(0, 255, 0);
+              line(x, y, z, px, py, pz);
+          }
+      }
+  
+      // Print hovered bone name
+      if (hoveredBone != null) {
+          println("Current bone:", hoveredBone.name);
+      }
+  }
 
-        // Get screen position
-        PVector screenPos = new PVector(
-            screenX(x, y, z),
-            screenY(x, y, z),
-            screenZ(x, y, z)
-        );
-        boneScreenPositions.add(screenPos);
+  boolean selectBone(int mx, int my) {
+      selectedBone = null;
+      float closestDistance = Float.MAX_VALUE;
+  
+      for (Bone bone : bones) {
+          float[] m = new float[16];
+          bone.globalTransform.get(m);
+          float x = m[12];
+          float y = m[13];
+          float z = m[14];
+  
+          // Get screen position
+          float screenX = screenX(x, y, z);
+          float screenY = screenY(x, y, z);
+          float screenZ = screenZ(x, y, z);
+  
+          // Skip bones behind the camera
+          if (screenZ <= 0) continue;
+  
+          // Calculate 2D distance to mouse
+          float distToMouse = dist(mx, my, screenX, screenY);
+  
+          // Track closest bone within threshold
+          if (distToMouse < 10 && distToMouse < closestDistance) {
+              closestDistance = distToMouse;
+              selectedBone = bone;
+              initialBonePos.set(x, y, z);
+          }
+      }
+  
+      return selectedBone != null; // Return true if a bone is selected
+  }
 
-        // Skip bones behind camera
-        if (screenPos.z <= 0) continue;
-
-        // Calculate 2D distance to mouse
-        float distToMouse = dist(mouseX, mouseY, screenPos.x, screenPos.y);
-        
-        // Track closest bone within threshold
-        if (distToMouse < 10 && distToMouse < closestDistance) {
-            closestDistance = distToMouse;
-            hoveredBone = bone;
-        }
-
-        // Draw bone visuals (unchanged)
-        pushMatrix();
-        translate(x, y, z);
-        sphere(2);
-        popMatrix();
-
-        if (bone.parent != -1) {
-            Bone parent = bones.get(boneIdMap.get(bone.parent));
-            float[] pm = new float[16];
-            parent.globalTransform.get(pm);
-            float px = pm[12];
-            float py = pm[13];
-            float pz = pm[14];
-            stroke(0, 255, 0);
-            line(x, y, z, px, py, pz);
-        }
-    }
-
-    // Print hovered bone name
-    if (hoveredBone != null) {
-        println("Current bone:", hoveredBone.name);
-        
-        // Draw label for closest bone
-        PVector screenPos = boneScreenPositions.get(bones.indexOf(hoveredBone));
-        pushStyle();
-        hint(DISABLE_DEPTH_TEST);
-        textSize(12);
-        fill(255, 255, 0);
-        textAlign(CENTER, BOTTOM);
-        text(hoveredBone.name, screenPos.x, screenPos.y - 15);
-        hint(ENABLE_DEPTH_TEST);
-        popStyle();
-    }
-}
+  void dragBone(int dx, int dy) {
+      if (selectedBone == null) return;
+  
+      // Calculate translation based on camera orientation
+      float sensitivity = 0.01;
+      PVector delta = PVector.mult(cameraRight, dx * sensitivity);
+      delta.add(PVector.mult(cameraUp, -dy * sensitivity));
+  
+      // Apply translation to the bone's global transform
+      selectedBone.globalTransform.translate(delta.x, delta.y, delta.z);
+  
+      // Update the bone hierarchy and skinning
+      updateBoneHierarchy(selectedBone);
+      applySkinning();
+  }
+  
+  void updateBoneHierarchy(Bone bone) {
+      if (bone.parent != -1) {
+          Bone parent = bones.get(boneIdMap.get(bone.parent));
+          PMatrix3D invParent = parent.globalTransform.get();
+          invParent.invert();
+          bone.matrix.set(bone.globalTransform); // Copy global transform
+          bone.matrix.preApply(invParent);       // Apply inverse parent transform
+      } else {
+          bone.matrix.set(bone.globalTransform); // Root bone's local matrix is its global transform
+      }
+  
+      // Update children recursively
+      for (Bone child : bone.children) {
+          child.globalTransform.set(bone.globalTransform);
+          child.globalTransform.apply(child.matrix);
+          updateBoneHierarchy(child);
+      }
+  }
 
   void draw() {
     pushMatrix();
     translate(0, 0, 0);
     shape(mesh);
     popMatrix();
+    drawBones();
   }
 }
