@@ -386,6 +386,17 @@ class RKModel {
       // Convert quaternions and interpolate
       float[] qA = { pA.quat[0], pA.quat[1], pA.quat[2], pA.quat[3] };
       float[] qB = { pB.quat[0], pB.quat[1], pB.quat[2], pB.quat[3] };
+
+      // You need to apply the quaternion dot product check before performing spherical linear interpolation (slerp). 
+      // This ensures that the shortest path is taken during interpolation
+      float dot = qA[0] * qB[0] + qA[1] * qB[1] + qA[2] * qB[2] + qA[3] * qB[3];
+      if (dot < 0) {
+          qB[0] = -qB[0];
+          qB[1] = -qB[1];
+          qB[2] = -qB[2];
+          qB[3] = -qB[3];
+      }
+
       float[] quat = slerp(qA, qB, t);
 
       // Normalize the interpolated quaternion
