@@ -65,7 +65,7 @@ class Bone {
     PMatrix3D matrix; // Current transformation matrix
     PMatrix3D animatedMatrix; // Matrix used during animation
     PMatrix3D inverseBindMatrix;
-    PMatrix3D restPoseMatrix; // Store the rest pose matrix
+    PMatrix3D restPoseMatrix;
     ArrayList<Bone> children;
 
     Bone(int id, int parent, String name) {
@@ -75,7 +75,7 @@ class Bone {
         this.matrix = new PMatrix3D();
         this.animatedMatrix = new PMatrix3D();
         this.inverseBindMatrix = new PMatrix3D();
-        this.restPoseMatrix = new PMatrix3D(); // Initialize rest pose matrix
+        this.restPoseMatrix = new PMatrix3D();
         this.children = new ArrayList<>();
     }
 }
@@ -156,10 +156,10 @@ class AnimationState {
       // Handle looping or stopping at the end
       if (currentFrame > clip.endFrame) {
         if (clip.loop) {
-          currentFrame = clip.startFrame; // Loop back to the start
+          currentFrame = clip.startFrame;
         } else {
-          currentFrame = clip.endFrame; // Stop at the last frame
-          playing = false; // Stop playing
+          currentFrame = clip.endFrame;
+          playing = false;
         }
       }
     }
@@ -194,6 +194,7 @@ class RKModel {
   ArrayList<AnimationClip> animations = new ArrayList<>();
   AnimationState currentAnim;
   RKAnimation animationData;
+  ArrayList<String> animationNames = new ArrayList<String>();
   boolean hasAnimations = false;
   PShape mesh;
   PImage texture;
@@ -355,12 +356,14 @@ class RKModel {
       for (String line : lines) {
         String[] parts = split(line, ',');
         if (parts.length == 4) {
+          String animName = parts[0].replaceAll("\"", "").trim();
           animations.add(new AnimationClip(
-            parts[0].replaceAll("\"", "").trim(),
+            animName,
             int(parts[1]),
             int(parts[2]),
             float(parts[3])
           ));
+          animationNames.add(animName); // Add animation name to the array
         }
       }
     }
@@ -401,8 +404,8 @@ class RKModel {
     for (AnimationClip clip : animations) {
       if (clip.name.equals(name)) {
         currentAnim = new AnimationState(clip);
-        currentAnim.clip.loop = loop; // Set the loop flag
-        currentAnim.clip.fps = 10;
+        currentAnim.clip.loop = loop;
+        currentAnim.clip.fps = 15;
         currentAnim.playing = true;
         println("Playing clip:", name, "for", clip.endFrame - clip.startFrame, "frames");
         return;
@@ -699,60 +702,60 @@ class RKModel {
     );
   }
 
-void applySkinning() {
-    for (int i = 0; i < vertices.size(); i++) {
-        PVector original = vertices.get(i);
-        PVector skinned = new PVector();
-        ArrayList<VertexWeight> weights = skinning.weights.get(i);
-        float totalWeight = 0;
-
-        // Normalize weights to ensure they sum to 1.0
-        float weightSum = 0;
-        for (VertexWeight w : weights) {
-            weightSum += w.weight;
-        }
-        if (weightSum > 0) {
-            for (VertexWeight w : weights) {
-                w.weight /= weightSum;
-            }
-        }
-
-        // Apply skinning
-        for (VertexWeight w : weights) {
-            if (w.boneIndex >= bones.size()) continue;
-            Bone bone = bones.get(w.boneIndex);
-
-            // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
-            PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
-                ? bone.restPoseMatrix.get() 
-                : bone.animatedMatrix.get();
-
-            // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
-            skinningMatrix.apply(bone.inverseBindMatrix);
-
-            // Transform vertex
-            PVector transformed = new PVector();
-            skinningMatrix.mult(original, transformed);
-            transformed.mult(w.weight);
-            skinned.add(transformed);
-            totalWeight += w.weight;
-        }
-
-        // Normalize if weights don't sum to 1.0
-        if (totalWeight > 0.001) {
-            skinned.mult(1.0 / totalWeight);
-        } else {
-            skinned = original.copy();
-        }
-
-        skinnedVerts.set(i, skinned);
-    }
-    updateMeshVertices();
-
-    if (startup) {
-        startup = false;
-    }
-}
+  void applySkinning() {
+      for (int i = 0; i < vertices.size(); i++) {
+          PVector original = vertices.get(i);
+          PVector skinned = new PVector();
+          ArrayList<VertexWeight> weights = skinning.weights.get(i);
+          float totalWeight = 0;
+  
+          // Normalize weights to ensure they sum to 1.0
+          float weightSum = 0;
+          for (VertexWeight w : weights) {
+              weightSum += w.weight;
+          }
+          if (weightSum > 0) {
+              for (VertexWeight w : weights) {
+                  w.weight /= weightSum;
+              }
+          }
+  
+          // Apply skinning
+          for (VertexWeight w : weights) {
+              if (w.boneIndex >= bones.size()) continue;
+              Bone bone = bones.get(w.boneIndex);
+  
+              // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
+              PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
+                  ? bone.restPoseMatrix.get() 
+                  : bone.animatedMatrix.get();
+  
+              // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
+              skinningMatrix.apply(bone.inverseBindMatrix);
+  
+              // Transform vertex
+              PVector transformed = new PVector();
+              skinningMatrix.mult(original, transformed);
+              transformed.mult(w.weight);
+              skinned.add(transformed);
+              totalWeight += w.weight;
+          }
+  
+          // Normalize if weights don't sum to 1.0
+          if (totalWeight > 0.001) {
+              skinned.mult(1.0 / totalWeight);
+          } else {
+              skinned = original.copy();
+          }
+  
+          skinnedVerts.set(i, skinned);
+      }
+      updateMeshVertices();
+  
+      if (startup) {
+          startup = false;
+      }
+  }
   
   void updateMeshVertices() {
       int vertexIndex = 0;
