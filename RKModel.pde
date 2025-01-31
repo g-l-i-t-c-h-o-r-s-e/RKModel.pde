@@ -59,21 +59,23 @@ class Section {
 }
 
 class Bone {
-  int id;
-  int parent;
-  String name;
-  PMatrix3D matrix;
-  PMatrix3D animatedMatrix;
-  PMatrix3D inverseBindMatrix;
+    int id;
+    int parent;
+    String name;
+    PMatrix3D matrix;
+    PMatrix3D animatedMatrix;
+    PMatrix3D inverseBindMatrix;
+    ArrayList<Bone> children;
 
-  Bone(int id, int parent, String name) {
-    this.id = id;
-    this.parent = parent;
-    this.name = name;
-    this.matrix = new PMatrix3D();
-    this.animatedMatrix = new PMatrix3D();
-    this.inverseBindMatrix = new PMatrix3D();
-  }
+    Bone(int id, int parent, String name) {
+        this.id = id;
+        this.parent = parent;
+        this.name = name;
+        this.matrix = new PMatrix3D();
+        this.animatedMatrix = new PMatrix3D();
+        this.inverseBindMatrix = new PMatrix3D();
+        this.children = new ArrayList<>();
+    }
 }
 
 class BonePose {
@@ -121,39 +123,41 @@ class AnimationState {
   int currentFrame;
   float frameTime;
   boolean playing;
-  boolean loop;
   long lastUpdate;
 
   AnimationState(AnimationClip clip) {
     this.clip = clip;
     reset();
   }
-  
+
   void reset() {
     currentFrame = clip.startFrame;
     frameTime = 0;
     playing = false;
     lastUpdate = millis();
   }
-  
+
   void update() {
     if (!playing) return;
-    
+
     long currentTime = millis();
-    frameTime += (currentTime - lastUpdate) / 1000.0;
+    frameTime += (currentTime - lastUpdate) / 1000.0; // Update frame time
     lastUpdate = currentTime;
-    
-    float frameDuration = 1.0 / clip.fps;
+
+    float frameDuration = 1.0 / clip.fps; // Duration of each frame
+
+    // Advance to the next frame if enough time has passed
     if (frameTime >= frameDuration) {
-      frameTime = 0;
-      currentFrame++;
-      
+      frameTime = 0; // Reset frame time
+      currentFrame++; // Move to the next frame
+
+      // Handle looping or stopping at the end
       if (currentFrame > clip.endFrame) {
         if (clip.loop) {
-          currentFrame = clip.startFrame;
+          currentFrame = clip.startFrame; // Loop back to the start
         } else {
-          currentFrame = clip.endFrame;
-          playing = false;
+          currentFrame = clip.endFrame; // Stop at the last frame
+          playing = false; // Stop playing
         }
       }
     }
@@ -237,36 +241,83 @@ class RKModel {
   }
 
   void loadBones(byte[] data) {
-    Section boneSec = sections.get(7);
-    if (boneSec == null) return;
-
-    println("\nBones:");
-    this.boneIdMap = new HashMap<>();
-    int boneSize = 140;
-
-    for (int i = 0; i < boneSec.count; i++) {
-      int off = boneSec.offset + i*boneSize;
-      int parent = readInt4(data, off);
-      parent = parent == 0xFFFFFFFF ? -1 : parent;
-
-      int id = readInt4(data, off + 4);
-      int numChildren = readInt4(data, off + 8);
-
-      // Read matrix as row-major and transpose to column-major
-      float[] matrixData = new float[16];
-      for (int j = 0; j < 16; j++) {
-        matrixData[j] = readFloat4(data, off + 12 + j*4);
+      Section boneSec = sections.get(7);
+      if (boneSec == null) return;
+  
+      println("\nBones:");
+      this.boneIdMap = new HashMap<>(); // Map bone IDs to their indices in the bones list
+      int boneSize = 140; // Size of each bone entry in bytes
+  
+      // First pass: Load all bones and store them in the bones list
+      for (int i = 0; i < boneSec.count; i++) {
+          int off = boneSec.offset + i * boneSize; // Calculate offset for the current bone
+  
+          // Read parent bone ID (0xFFFFFFFF means no parent)
+          int parent = readInt4(data, off);
+          parent = parent == 0xFFFFFFFF ? -1 : parent;
+  
+          // Read bone ID
+          int id = readInt4(data, off + 4);
+  
+          // Read number of children (not used directly here, but available if needed)
+          int numChildren = readInt4(data, off + 8);
+  
+          // Read the bone's transformation matrix (row-major order)
+          float[] matrixData = new float[16];
+          for (int j = 0; j < 16; j++) {
+              matrixData[j] = readFloat4(data, off + 12 + j * 4);
+          }
+  
+          // Read the bone's name (64-byte string, null-terminated)
+          String name = header.readString(data, off + 76, 64);
+  
+          // Create the bone object
+          Bone bone = new Bone(id, parent, name);
+          bone.matrix.set(matrixData); // Set the bone's transformation matrix
+          bone.matrix.scale(scale); // Apply scaling to match the mesh
+          bone.matrix.transpose(); // Convert from row-major to column-major order
+  
+          // Add the bone to the bones list and map its ID to its index
+          bones.add(bone);
+          boneIdMap.put(id, i);
+  
+          // Print bone information for debugging
+          println(i + ": ID " + id + " " + name + " (Parent: " + parent + ")");
+          printMatrix(bone.matrix);
       }
-      
-      String name = header.readString(data, off + 76, 64);
-      Bone bone = new Bone(id, parent, name);
-      bone.matrix.set(matrixData);
-      bone.matrix.transpose();
-      bones.add(bone);
-      boneIdMap.put(id, i);
-      println(i+": ID "+id+" "+name+" (Parent: "+parent+")");
-      printMatrix(bone.matrix);
-    }
+  
+      // Second pass: Establish parent-child relationships
+      for (Bone bone : bones) {
+          if (bone.parent != -1) { // If the bone has a parent
+              // Find the parent bone using the boneIdMap
+              Bone parentBone = bones.get(boneIdMap.get(bone.parent));
+  
+              // Add the current bone as a child of its parent
+              parentBone.children.add(bone);
+          }
+      }
+  
+      // Print hierarchy for debugging
+      println("\nBone Hierarchy:");
+      for (Bone bone : bones) {
+          if (bone.parent == -1) { // Only print root bones
+              printBoneHierarchy(bone, 0);
+          }
+      }
+  }
+  
+  // Helper method to recursively print the bone hierarchy
+  void printBoneHierarchy(Bone bone, int depth) {
+      // Indent based on depth to visualize hierarchy
+      for (int i = 0; i < depth; i++) {
+          print("  ");
+      }
+      println("- " + bone.name + " (ID: " + bone.id + ")");
+  
+      // Recursively print children
+      for (Bone child : bone.children) {
+          printBoneHierarchy(child, depth + 1);
+      }
   }
   
   void loadAnimations(String animFile) {
@@ -341,10 +392,12 @@ class RKModel {
     println("- Registered Clips:", animations.size());
   }
   
-  void playAnimation(String name) {
+  void playAnimation(String name, boolean loop) {
     for (AnimationClip clip : animations) {
       if (clip.name.equals(name)) {
         currentAnim = new AnimationState(clip);
+        currentAnim.clip.loop = loop; // Set the loop flag
+        currentAnim.clip.fps = 10;
         currentAnim.playing = true;
         println("Playing clip:", name, "for", clip.endFrame - clip.startFrame, "frames");
         return;
@@ -386,7 +439,7 @@ class RKModel {
       // Convert quaternions and interpolate
       float[] qA = { pA.quat[0], pA.quat[1], pA.quat[2], pA.quat[3] };
       float[] qB = { pB.quat[0], pB.quat[1], pB.quat[2], pB.quat[3] };
-
+      
       // You need to apply the quaternion dot product check before performing spherical linear interpolation (slerp). 
       // This ensures that the shortest path is taken during interpolation
       float dot = qA[0] * qB[0] + qA[1] * qB[1] + qA[2] * qB[2] + qA[3] * qB[3];
@@ -396,7 +449,6 @@ class RKModel {
           qB[2] = -qB[2];
           qB[3] = -qB[3];
       }
-
       float[] quat = slerp(qA, qB, t);
 
       // Normalize the interpolated quaternion
@@ -408,6 +460,7 @@ class RKModel {
 
       // 1. Create rotation matrix from quaternion
       PMatrix3D rotationMatrix = quatToMatrix(quat);
+      //normalizeScaling(rotationMatrix); doesnt help
       
       // 2. Apply translation to the rotated space
       PMatrix3D translationMatrix = new PMatrix3D();
@@ -456,6 +509,35 @@ class RKModel {
     }
   }
   
+  void normalizeScaling(PMatrix3D matrix) {
+      float[] m = new float[16];
+      matrix.get(m);
+  
+      // Extract scaling factors
+      float sx = sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+      float sy = sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+      float sz = sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+  
+      // Normalize the matrix to remove unintended scaling
+      if (sx != 0) {
+          m[0] /= sx;
+          m[1] /= sx;
+          m[2] /= sx;
+      }
+      if (sy != 0) {
+          m[4] /= sy;
+          m[5] /= sy;
+          m[6] /= sy;
+      }
+      if (sz != 0) {
+          m[8] /= sz;
+          m[9] /= sz;
+          m[10] /= sz;
+      }
+  
+      matrix.set(m);
+  }
+  
   // Print Bone Matrix
   void printMatrix(PMatrix3D mat) {
     // PMatrix3D stores values in column-major order
@@ -471,114 +553,121 @@ class RKModel {
   }
 
   void loadGeometry(byte[] data) {
-    Section vertSec = sections.get(3);
-    if (vertSec == null) return;
-    
-    int stride = vertSec.byteLength / vertSec.count;
-    println("Vertex stride:",stride,"bytes");
-    
-    for (int i = 0; i < vertSec.count; i++) {
-      int off = vertSec.offset + i*stride;
+      Section vertSec = sections.get(3);
+      if (vertSec == null) return;
       
-      PVector pos = new PVector(
-        readFloat4(data, off) * scale,       // X
-        readFloat4(data, off + 4) * scale,   // Y
-        readFloat4(data, off + 8) * scale    // Z
-      );
+      int stride = vertSec.byteLength / vertSec.count;
+      println("Vertex stride:",stride,"bytes");
+      
+      for (int i = 0; i < vertSec.count; i++) {
+        int off = vertSec.offset + i*stride;
         
-      PVector uv = new PVector(0, 0);
-      if (stride >= 16) {
+        PVector pos = new PVector(
+          readFloat4(data, off) * scale,       // X
+          readFloat4(data, off + 4) * scale,   // Y
+          readFloat4(data, off + 8) * scale    // Z
+        );
+          
+        PVector uv = new PVector(0, 0);
         if (stride == 16 || stride == 20) {
-          short u = readShort2(data, off+16);
-          short v = readShort2(data, off+18);
-          uv.x = map(u, -32767, 32767, 0, 1);
-          uv.y = map(v, -32767, 32767, 1, 0);
+          // Read unsigned shorts for U and V
+          int u = (data[off+16] & 0xFF) | ((data[off+17] & 0xFF) << 8);
+          int v = (data[off+18] & 0xFF) | ((data[off+19] & 0xFF) << 8);
+          
+          // Map to [0, 1] and apply Noesis scaling (x2)
+          uv.x = (u / 65535.0) * 2.0;
+          uv.y = 1.0 - (v / 65535.0) * 2.0; // Flipped V-axis
+  
+          
+          // Optional: Clamp to [0, 1] if texture should not tile
+           //uv.x = constrain(uv.x, 0, 1);
+           //uv.y = constrain(uv.y, 0, 1);
         }
-        else if (stride == 28) {
-          uv.x = readFloat4(data, off+16);
-          uv.y = 1.0 - readFloat4(data, off+20);
-        }
-      }
-      
-      vertices.add(pos);
-      uvs.add(uv);
-    }
-
-    Section faceSec = sections.get(4);
-    if (faceSec == null) return;
-    
-    boolean use32bit = vertices.size() > 65535;
-    int indexSize = use32bit ? 4 : 2;
-    int triCount = faceSec.byteLength / (indexSize * 3);
-    
-    println("Loading",triCount,"triangles with",(use32bit ? 32 : 16)+"-bit indices");
-    for (int i = 0; i < triCount; i++) {
-      int off = faceSec.offset + i * indexSize * 3;
-      int[] tri = new int[3];
-      
-      for (int j = 0; j < 3; j++) {
-        if (use32bit) {
-          tri[j] = readInt4(data, off + (j*4));
-        } else {
-          tri[j] = readShort2(data, off + (j*2)) & 0xFFFF;
+        
+        vertices.add(pos);
+        uvs.add(uv);
+  
+        // Debug print for first few UVs
+        if (i < 10) {
+          println("Vertex " + i + " UV: " + uv.x + ", " + uv.y);
         }
       }
-      triangles.add(tri);
-    }
-    println("Successfully loaded",triangles.size(),"triangles");
+  
+      Section faceSec = sections.get(4);
+      if (faceSec == null) return;
       
-    Section weightSec = sections.get(17);
-    if (weightSec != null) {
-      int weightSize = weightSec.byteLength / weightSec.count;
-      for (int i = 0; i < weightSec.count; i++) {
-        int off = weightSec.offset + i * weightSize;
-        ArrayList<VertexWeight> vWeights = new ArrayList<>();
-
-        // Read 4 bone IDs (1 byte each) followed by 4 weights (2 bytes each)
-        float totalWeight = 0;
-        for (int j = 0; j < 4; j++) {
-          int boneId = data[off + j] & 0xFF; // 1-byte bone IDs
-          Integer boneIndex = this.boneIdMap.get(boneId);
-
-          if (boneIndex == null) {
-            println("Missing bone mapping for ID: " + boneId);
-            continue;
-          }
-
-          // Read weight (2 bytes per weight after 4 bone IDs)
-          int weightOffset = off + 4 + (j * 2);
-          int weightValue = readShort2(data, weightOffset) & 0xFFFF;
-          float weight = weightValue / 65535.0f;
-
-          if (weight > 0) {
-            vWeights.add(new VertexWeight(boneIndex, weight));
-            totalWeight += weight;
+      boolean use32bit = vertices.size() > 65535;
+      int indexSize = use32bit ? 4 : 2;
+      int triCount = faceSec.byteLength / (indexSize * 3);
+      
+      println("Loading",triCount,"triangles with",(use32bit ? 32 : 16)+"-bit indices");
+      for (int i = 0; i < triCount; i++) {
+        int off = faceSec.offset + i * indexSize * 3;
+        int[] tri = new int[3];
+        
+        for (int j = 0; j < 3; j++) {
+          if (use32bit) {
+            tri[j] = readInt4(data, off + (j*4));
+          } else {
+            tri[j] = readShort2(data, off + (j*2)) & 0xFFFF;
           }
         }
-
-        // Normalize weights to ensure they sum to 1.0
-        if (totalWeight > 0) {
-          for (VertexWeight w : vWeights) {
-            w.weight /= totalWeight;
+        triangles.add(tri);
+      }
+      println("Successfully loaded",triangles.size(),"triangles");
+        
+      Section weightSec = sections.get(17);
+      if (weightSec != null) {
+        int weightSize = weightSec.byteLength / weightSec.count;
+        for (int i = 0; i < weightSec.count; i++) {
+          int off = weightSec.offset + i * weightSize;
+          ArrayList<VertexWeight> vWeights = new ArrayList<>();
+  
+          // Read 4 bone IDs (1 byte each) followed by 4 weights (2 bytes each)
+          float totalWeight = 0;
+          for (int j = 0; j < 4; j++) {
+            int boneId = data[off + j] & 0xFF; // 1-byte bone IDs
+            Integer boneIndex = this.boneIdMap.get(boneId);
+  
+            if (boneIndex == null) {
+              println("Missing bone mapping for ID: " + boneId);
+              continue;
+            }
+  
+            // Read weight (2 bytes per weight after 4 bone IDs)
+            int weightOffset = off + 4 + (j * 2);
+            int weightValue = readShort2(data, weightOffset) & 0xFFFF;
+            float weight = weightValue / 65535.0f;
+  
+            if (weight > 0) {
+              vWeights.add(new VertexWeight(boneIndex, weight));
+              totalWeight += weight;
+            }
           }
+  
+          // Normalize weights to ensure they sum to 1.0
+          if (totalWeight > 0) {
+            for (VertexWeight w : vWeights) {
+              w.weight /= totalWeight;
+            }
+          }
+  
+          skinning.weights.add(vWeights);
         }
-
-        skinning.weights.add(vWeights);
+      } else {
+        // Add empty weights if no weight section found
+        for (int i = 0; i < vertices.size(); i++) {
+          skinning.weights.add(new ArrayList<VertexWeight>());
+        }
       }
-    } else {
-      // Add empty weights if no weight section found
-      for (int i = 0; i < vertices.size(); i++) {
-        skinning.weights.add(new ArrayList<VertexWeight>());
-      }
+      println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
     }
-    println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
-  }
 
   void buildMesh() {
     mesh = createShape();
     mesh.beginShape(TRIANGLES);
-    // mesh.texture(texture);
-    // mesh.textureMode(NORMAL);
+    mesh.texture(texture);
+    mesh.textureMode(NORMAL);
     mesh.noStroke();
     
     for (int[] tri : triangles) {
@@ -605,52 +694,82 @@ class RKModel {
   }
 
   void applySkinning() {
-    for (int i = 0; i < vertices.size(); i++) {
-      PVector original = vertices.get(i);
-      PVector skinned = new PVector();
-      ArrayList<VertexWeight> weights = skinning.weights.get(i);
-      float totalWeight = 0;
-
-      for (VertexWeight w : weights) {
-        if (w.boneIndex >= bones.size()) continue;
-        Bone bone = bones.get(w.boneIndex);
-
-        // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
-        PMatrix3D skinningMatrix = bone.animatedMatrix.get();
-        skinningMatrix.apply(bone.inverseBindMatrix);
-
-        // Transform vertex
-        PVector transformed = new PVector();
-        skinningMatrix.mult(original, transformed);
-        transformed.mult(w.weight);
-        skinned.add(transformed);
-        totalWeight += w.weight;
+      for (int i = 0; i < vertices.size(); i++) {
+          PVector original = vertices.get(i);
+          PVector skinned = new PVector();
+          ArrayList<VertexWeight> weights = skinning.weights.get(i);
+          float totalWeight = 0;
+  
+          // Normalize weights to ensure they sum to 1.0
+          float weightSum = 0;
+          for (VertexWeight w : weights) {
+              weightSum += w.weight;
+          }
+          if (weightSum > 0) {
+              for (VertexWeight w : weights) {
+                  w.weight /= weightSum;
+              }
+          }
+  
+          // Apply skinning
+          for (VertexWeight w : weights) {
+              if (w.boneIndex >= bones.size()) continue;
+              Bone bone = bones.get(w.boneIndex);
+  
+              // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
+              PMatrix3D skinningMatrix = bone.animatedMatrix.get();
+              //normalizeMatrix(skinningMatrix);
+              skinningMatrix.apply(bone.inverseBindMatrix);
+  
+              // Transform vertex
+              PVector transformed = new PVector();
+              skinningMatrix.mult(original, transformed);
+              transformed.mult(w.weight);
+              skinned.add(transformed);
+              totalWeight += w.weight;
+          }
+  
+          // Normalize if weights don't sum to 1.0
+          if (totalWeight > 0.001) {
+              skinned.mult(1.0 / totalWeight);
+          } else {
+              skinned = original.copy();
+          }
+  
+          skinnedVerts.set(i, skinned);
       }
-
-      // Normalize if weights don't sum to 1.0
-      if (totalWeight > 0.001) {
-        skinned.mult(1.0 / totalWeight);
-      } else {
-        skinned = original.copy();
-      }
-
-      skinnedVerts.set(i, skinned);
-    }
-    updateMeshVertices();
+      updateMeshVertices();
   }
   
   void updateMeshVertices() {
-    int vertexIndex = 0;
-    for (int[] tri : triangles) {
-      for (int j = 0; j < 3; j++) {
-        int originalIndex = tri[j]; // Get original vertex index from triangle data
-        if (originalIndex < skinnedVerts.size()) {
-          PVector v = skinnedVerts.get(originalIndex); // Fetch skinned position
-          mesh.setVertex(vertexIndex, v.x, v.y, v.z); // Update mesh vertex
-        }
-        vertexIndex++;
+      int vertexIndex = 0;
+      for (int[] tri : triangles) {
+          for (int j = 0; j < 3; j++) {
+              int originalIndex = tri[j]; // Get original vertex index from triangle data
+              if (originalIndex < skinnedVerts.size()) {
+                  PVector v = skinnedVerts.get(originalIndex); // Fetch skinned position
+                  mesh.setVertex(vertexIndex, v.x, v.y, v.z); // Update mesh vertex
+              }
+              vertexIndex++;
+          }
       }
-    }
+  }
+
+  void normalizeMatrix(PMatrix3D matrix) {
+      float[] m = new float[16];
+      matrix.get(m);
+  
+      // Normalize the upper 3x3 rotation/scale part of the matrix
+      for (int i = 0; i < 3; i++) {
+          float len = sqrt(m[i] * m[i] + m[i + 4] * m[i + 4] + m[i + 8] * m[i + 8]);
+          if (len > 0) {
+              m[i] /= len;
+              m[i + 4] /= len;
+              m[i + 8] /= len;
+          }
+      }
+  
+      matrix.set(m);
   }
   
   void printSummary() {
