@@ -5,11 +5,11 @@ PImage tex;
 
 void setup() {
   size(1200, 800, P3D);
-  tex = loadImage("3702524.jpg"); //still working on textures
+  // tex = loadImage("3702524.jpg"); //still working on textures
   // tex = loadImage("pony_ponyville_162.png"); //still working on textures
   model = new RKModel("pony_type01_muffins_lod1.rk", tex);
   model.loadAnimations("pony_type01.anim");
-  model.playAnimation("apple_idle_01_l");
+  model.playAnimation("apple_idle_02_l", true);
   
   cam = new PeasyCam(this, 130);
 }
@@ -23,7 +23,7 @@ void draw() {
   directionalLight(30, 30, 60, 1, -1, 0);
   
   pushMatrix();
-  rotateY(PI * 0.8);
+  rotateY(PI * 0.5);
   translate(0,30,0);
   hint(ENABLE_DEPTH_TEST);
   model.draw();
