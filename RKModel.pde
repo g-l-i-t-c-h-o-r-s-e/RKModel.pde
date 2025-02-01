@@ -181,19 +181,23 @@ class VertexWeight {
 
 class Submesh {
     String name;
-    int trianglesCount; // Number of triangles
-    ArrayList<int[]> triangles; // Actual triangle data
+    int trianglesCount;
     int offset;
     int material;
     int unknown;
+    ArrayList<int[]> triangles = new ArrayList<>();
+    
+    // Add UV-related fields
+    int uvOffset;
+    String uvFormat;
+    float uvScale;
 
     Submesh(String name, int trianglesCount, int offset, int material, int unknown) {
         this.name = name;
-        this.trianglesCount = trianglesCount; // Store the number of triangles
+        this.trianglesCount = trianglesCount;
         this.offset = offset;
         this.material = material;
         this.unknown = unknown;
-        this.triangles = new ArrayList<>(); // Initialize the list for triangle data
     }
 }
 
@@ -269,63 +273,83 @@ class RKModel {
   }
   
   void readAttributes(byte[] data) {
-      Section attrSec = sections.get(13);
-      if (attrSec == null) return;
+    Section attrSec = sections.get(13);
+    if (attrSec == null) return;
   
-      int offset = attrSec.offset;
-      int count = attrSec.count;
+    int offset = attrSec.offset;
+    int count = attrSec.count;
   
-      for (int i = 0; i < count; i++) {
-          int attributeType = readShort2(data, offset);
-          int attributeOffset = data[offset + 2] & 0xFF;
-          int attributeFormat = data[offset + 3] & 0xFF;
-  
-          if (attributeType == 1030) {
-              this.uvOffset = attributeOffset;
-              this.uvFormat = "H"; // Unsigned short
-              this.uvScale = 2;
-          } else if (attributeType == 1026) {
-              this.uvOffset = attributeOffset;
-              this.uvFormat = "f"; // Float
-              this.uvScale = 1;
-          }
-  
-          offset += 4; // Move to the next attribute
+    // Loop over each attribute and set the global UV variables
+    for (int i = 0; i < count; i++) {
+      if (offset + 4 > data.length) {
+        throw new IllegalArgumentException("Attribute data exceeds buffer bounds.");
       }
+  
+      int attributeType = readShort2(data, offset);
+      int attributeOffset = data[offset + 2] & 0xFF;
+      int attributeFormat = data[offset + 3] & 0xFF;
+  
+      if (attributeType == 1030) {
+        uvOffset = attributeOffset;
+        uvFormat = "H"; // Unsigned short
+        uvScale = 2;
+        println("Global UV (type H) found, offset:", uvOffset);
+      } else if (attributeType == 1026) {
+        uvOffset = attributeOffset;
+        uvFormat = "f"; // Float
+        uvScale = 1;
+        println("Global UV (type f) found, offset:", uvOffset);
+      }
+  
+      offset += 4; // Move to the next attribute
+    }
   }
+
   
-  void readSubmeshInfo(byte[] data) {
-      Section submeshNamesSec = sections.get(16); // SUBMESH_NAMES section
-      Section submeshInfoSec = sections.get(1); // SUBMESH_INFO section
-       
-      if (submeshNamesSec == null || submeshInfoSec == null) return;
-  
-      ArrayList<String> submeshNames = new ArrayList<>();
-      int offset = submeshNamesSec.offset;
-      for (int i = 0; i < submeshNamesSec.count; i++) {
-          submeshNames.add(readString(data, offset, 64));
-          offset += 64;
-      }
-  
-      offset = submeshInfoSec.offset;
-      for (int i = 0; i < submeshInfoSec.count; i++) {
-          int triangles = readInt4(data, offset);
-          int triangleOffset = readInt4(data, offset + 4);
-          int materialIndex = readInt4(data, offset + 8);
-          int unknown = readInt4(data, offset + 12);
-  
-          Submesh submesh = new Submesh(
-              submeshNames.get(i),
-              triangles,
-              triangleOffset,
-              materialIndex,
-              unknown
-          );
-  
-          submeshes.add(submesh);
-          offset += 16;
-      }
-  }
+void readSubmeshInfo(byte[] data) {
+    Section submeshNamesSec = sections.get(16); // SUBMESH_NAMES section
+    Section submeshInfoSec = sections.get(1); // SUBMESH_INFO section
+
+    if (submeshNamesSec == null || submeshInfoSec == null) return;
+
+    // Ensure the number of names matches the number of submesh info entries
+    if (submeshNamesSec.count != submeshInfoSec.count) {
+        throw new IllegalArgumentException("Mismatch between submesh names and info counts.");
+    }
+
+    ArrayList<String> submeshNames = new ArrayList<>();
+    int offset = submeshNamesSec.offset;
+    for (int i = 0; i < submeshNamesSec.count; i++) {
+        if (offset + 64 > data.length) {
+            throw new IllegalArgumentException("Submesh name data exceeds buffer bounds.");
+        }
+        submeshNames.add(readString(data, offset, 64));
+        offset += 64;
+    }
+
+    offset = submeshInfoSec.offset;
+    for (int i = 0; i < submeshInfoSec.count; i++) {
+        if (offset + 16 > data.length) {
+            throw new IllegalArgumentException("Submesh info data exceeds buffer bounds.");
+        }
+
+        int triangles = readInt4(data, offset);
+        int triangleOffset = readInt4(data, offset + 4);
+        int materialIndex = readInt4(data, offset + 8);
+        int unknown = readInt4(data, offset + 12);
+
+        Submesh submesh = new Submesh(
+            submeshNames.get(i),
+            triangles,
+            triangleOffset,
+            materialIndex,
+            unknown
+        );
+
+        submeshes.add(submesh);
+        offset += 16;
+    }
+}
 
   void loadMaterials(byte[] data) {
     Section matSec = sections.get(2);
@@ -575,6 +599,13 @@ class RKModel {
       bone.animatedMatrix.scale(scale);
     }
   }
+
+  void computeInverseBindMatrices() {
+    for (Bone bone : bones) {
+      bone.inverseBindMatrix = bone.matrix.get();
+      bone.inverseBindMatrix.invert();
+    }
+  }
   
   float[] slerp(float[] qa, float[] qb, float t) {
     float[] qm = new float[4];
@@ -606,12 +637,6 @@ class RKModel {
     return qm;
   }
 
-  void computeInverseBindMatrices() {
-    for (Bone bone : bones) {
-      bone.inverseBindMatrix = bone.matrix.get();
-      bone.inverseBindMatrix.invert();
-    }
-  }
   
   void normalizeScaling(PMatrix3D matrix) {
       float[] m = new float[16];
@@ -684,87 +709,91 @@ class RKModel {
     println("----------------------------------------");
   }
 
-  void loadGeometry(byte[] data) {
-      // Read attributes first to get UV format
-      readAttributes(data);
-      
-      Section vertSec = sections.get(3);
-      if (vertSec != null) {
-          int stride = vertSec.byteLength / vertSec.count;
-          println("Vertex stride:", stride, "bytes");
+void loadGeometry(byte[] data) {
+  // Read attributes first to get UV format
+  readAttributes(data);
+
   
-          for (int i = 0; i < vertSec.count; i++) {
-              int off = vertSec.offset + i * stride;
-              PVector pos = new PVector(
-                  readFloat4(data, off) * scale,
-                  readFloat4(data, off + 4) * scale,
-                  readFloat4(data, off + 8) * scale
-              );
-  
-              PVector uv = new PVector(0, 0);
-              if (uvFormat != null) {
-                  int uvOff = off + uvOffset;
-                  if (uvFormat.equals("H")) {
-                      int u = readShort2(data, uvOff) & 0xFFFF;
-                      int v = readShort2(data, uvOff + 2) & 0xFFFF;
-                      uv.x = (u * uvScale) / 65535.0f;
-                      uv.y = (v * uvScale) / 65535.0f;
-                  } else if (uvFormat.equals("f")) {
-                      uv.x = readFloat4(data, uvOff);
-                      uv.y = readFloat4(data, uvOff + 4);
-                  }
-              }
-  
-              vertices.add(pos);
-              uvs.add(uv);
-          }
+  Section vertSec = sections.get(3);
+  if (vertSec != null) {
+    int stride = vertSec.byteLength / vertSec.count;
+    println("Vertex stride:", stride, "bytes");
+
+    for (int i = 0; i < vertSec.count; i++) {
+      int baseOff = vertSec.offset + i * stride;
+      // Read position (assuming floats)
+      PVector pos = new PVector(
+        readFloat4(data, baseOff) * scale,
+        readFloat4(data, baseOff + 4) * scale,
+        readFloat4(data, baseOff + 8) * scale
+      );
+
+      // Compute UV offset for this vertex:
+      int uvAbsOff = baseOff + uvOffset;
+      PVector uv = new PVector(0, 0);
+      if (uvFormat != null) {
+        if (uvFormat.equals("H")) {
+          int u = readShort2(data, uvAbsOff) & 0xFFFF;
+          int v = readShort2(data, uvAbsOff + 2) & 0xFFFF;
+          uv.x = (u * uvScale) / 65535.0f;
+          uv.y = (v * uvScale) / 65535.0f;
+        } else if (uvFormat.equals("f")) {
+          uv.x = readFloat4(data, uvAbsOff);
+          uv.y = readFloat4(data, uvAbsOff + 4);
+        }
       }
-  
-      // Load triangles for the main mesh
-      Section faceSec = sections.get(4);
-      if (faceSec != null) {
-          boolean use32bit = vertices.size() > 65535;
-          int indexSize = use32bit ? 4 : 2;
-          int triCount = faceSec.byteLength / (indexSize * 3);
-          
-          println("Loading", triCount, "triangles with", (use32bit ? 32 : 16) + "-bit indices");
-          for (int i = 0; i < triCount; i++) {
-              int off = faceSec.offset + i * indexSize * 3;
-              int[] tri = new int[3];
-              
-              for (int j = 0; j < 3; j++) {
-                  if (use32bit) {
-                      tri[j] = readInt4(data, off + (j * 4));
-                  } else {
-                      tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
-                  }
-              }
-              triangles.add(tri);
-          }
-          println("Successfully loaded", triangles.size(), "triangles");
       
-  
-      if (submeshes != null && !submeshes.isEmpty()) {
-          for (Submesh submesh : submeshes) {
-              int start = faceSec.offset + submesh.offset;
-              int end = start + (submesh.trianglesCount * 3 * indexSize);
-  
-              for (int i = 0; i < submesh.trianglesCount; i++) {
-                  int off = start + (i * 3 * indexSize);
-                  int[] tri = new int[3];
-                  
-                  for (int j = 0; j < 3; j++) {
-                      if (use32bit) {
-                          tri[j] = readInt4(data, off + (j * 4));
-                      } else {
-                          tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
-                      }
-                  }
-                  submesh.triangles.add(tri);
-              }
-          }
-      }
-   }
+      vertices.add(pos);
+      uvs.add(uv);
+    }
+  }
+
+    // Load triangles for the main mesh
+    Section faceSec = sections.get(4);
+    if (faceSec != null) {
+        boolean use32bit = vertices.size() > 65535;
+        int indexSize = use32bit ? 4 : 2;
+        int triCount = faceSec.byteLength / (indexSize * 3);
+
+        println("Loading", triCount, "triangles with", (use32bit ? 32 : 16) + "-bit indices");
+        for (int i = 0; i < triCount; i++) {
+            int off = faceSec.offset + i * indexSize * 3;
+            int[] tri = new int[3];
+
+            for (int j = 0; j < 3; j++) {
+                if (use32bit) {
+                    tri[j] = readInt4(data, off + (j * 4));
+                } else {
+                    tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
+                }
+            }
+            triangles.add(tri);
+        }
+        println("Successfully loaded", triangles.size(), "triangles");
+
+        if (submeshes != null && !submeshes.isEmpty()) {
+            for (Submesh submesh : submeshes) {
+                int start = faceSec.offset + submesh.offset;
+                int end = start + (submesh.trianglesCount * 3 * indexSize);
+
+                for (int i = 0; i < submesh.trianglesCount; i++) {
+                    int off = start + (i * 3 * indexSize);
+                    int[] tri = new int[3];
+
+                    for (int j = 0; j < 3; j++) {
+                        if (use32bit) {
+                            tri[j] = readInt4(data, off + (j * 4));
+                        } else {
+                            tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
+                        }
+                    }
+                    submesh.triangles.add(tri);
+                }
+            }
+        }
+    }
+
+
 
     Section weightSec = sections.get(17);
     if (weightSec != null) {
@@ -923,46 +952,45 @@ void updateMeshVertices() {
 
 
 // /*
-  void buildMesh() {
-      // Create the main mesh as a GROUP shape
-      mesh = createShape(GROUP); 
-  
-      // Ensure skinnedVerts is initialized
-      skinnedVerts = new ArrayList<>(vertices);
-  
-      // Build submeshes and add them as children to the main mesh
-      if (submeshes != null && !submeshes.isEmpty()) {
-          for (Submesh submesh : submeshes) {
-              PShape part = createShape();
-              part.beginShape(TRIANGLES);
-              part.texture(texture);
-              part.textureMode(NORMAL);
-              part.noStroke();
-  
-              println("Building submesh:", submesh.name, 
-                     "with", submesh.triangles.size(), "triangles",
-                     "material:", materials.get(submesh.material));
-  
-              for (int[] tri : submesh.triangles) {
-                  for (int index : tri) {
-                      if (index >= vertices.size()) {
-                          println("Error: Invalid vertex index", index);
-                          continue;
-                      }
-                      PVector v = vertices.get(index);
-                      PVector uv = uvs.get(index);
-                      part.vertex(v.x, v.y, v.z, uv.x, uv.y);
-                  }
-              }
-              
-              part.endShape();
-              mesh.addChild(part); // Add the submesh as a child to the GROUP
+void buildMesh() {
+  // Create the main mesh as a GROUP shape
+  mesh = createShape(GROUP);
+  skinnedVerts = new ArrayList<>(vertices);
+
+  if (submeshes != null && !submeshes.isEmpty()) {
+    for (Submesh submesh : submeshes) {
+      PShape part = createShape();
+      part.beginShape(TRIANGLES);
+      part.texture(texture);
+      part.textureMode(NORMAL);
+      part.noStroke();
+
+      println("Building submesh:", submesh.name,
+              "with", submesh.triangles.size(), "triangles",
+              "material:", materials.get(submesh.material));
+
+      for (int[] tri : submesh.triangles) {
+        for (int index : tri) {
+          if (index >= vertices.size()) {
+            println("Error: Invalid vertex index", index);
+            continue;
           }
-          println("Added", submeshes.size(), "submeshes as children to the main mesh");
-      } else {
-          println("Warning: No submeshes found!");
+          PVector v = vertices.get(index);
+          PVector uv = uvs.get(index); // Retrieve precomputed UV from global list
+          part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+          println("Vertex", index, "UV:", uv.x, uv.y);
+        }
       }
+
+      part.endShape();
+      mesh.addChild(part);
+    }
+    println("Added", submeshes.size(), "submeshes as children to the main mesh");
+  } else {
+    println("Warning: No submeshes found!");
   }
+}
+
   
   void updateMeshVertices() {
       if (mesh == null) {
