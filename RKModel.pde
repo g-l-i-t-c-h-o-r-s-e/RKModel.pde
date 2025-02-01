@@ -154,7 +154,7 @@ class AnimationState {
       currentFrame++; // Move to the next frame
 
       // Handle looping or stopping at the end
-      if (currentFrame > clip.endFrame) {
+      if (currentFrame == clip.endFrame) {
         if (clip.loop) {
           currentFrame = clip.startFrame;
         } else {
@@ -312,7 +312,6 @@ class RKModel {
       }
   }
   
-  // Helper method to recursively print the bone hierarchy
   void printBoneHierarchy(Bone bone, int depth) {
       // Indent based on depth to visualize hierarchy
       for (int i = 0; i < depth; i++) {
@@ -363,7 +362,7 @@ class RKModel {
             int(parts[2]),
             float(parts[3])
           ));
-          animationNames.add(animName); // Add animation name to the array
+          animationNames.add(animName);
         }
       }
     }
@@ -374,6 +373,7 @@ class RKModel {
       
       for (int b=0; b<animationData.boneCount; b++) {
         BonePose pose = new BonePose();
+        
         
         // Position conversion: none
         pose.pos.x = readShort2(data, offset) / 32.0;
@@ -386,7 +386,6 @@ class RKModel {
         pose.quat[1] = (byte)data[offset+2] / 127.0;
         pose.quat[2] = (byte)data[offset+3] / 127.0;
         pose.quat[3] = (byte)data[offset+4] / 127.0;
-        
         offset += 5;
         
         frame.bones.add(pose);
@@ -473,11 +472,12 @@ class RKModel {
       
       // 2. Apply translation to the rotated space
       PMatrix3D translationMatrix = new PMatrix3D();
-      translationMatrix.translate(pos.x, pos.y, pos.z);
+      translationMatrix.translate(pos.x * scale, pos.y * scale, pos.z * scale);
       
       // 3. Combine as Translation * Rotation (T * R)
       translationMatrix.apply(rotationMatrix);
       bone.animatedMatrix = translationMatrix;
+      bone.animatedMatrix.scale(scale);
     }
   }
   
@@ -578,29 +578,34 @@ class RKModel {
         );
           
         PVector uv = new PVector(0, 0);
-        if (stride == 16 || stride == 20) {
-          // Read unsigned shorts for U and V
-          int u = (data[off+16] & 0xFF) | ((data[off+17] & 0xFF) << 8);
-          int v = (data[off+18] & 0xFF) | ((data[off+19] & 0xFF) << 8);
-          
-          // Map to [0, 1] and apply Noesis scaling (x2)
-          uv.x = (u / 65535.0) * 2.0;
-          uv.y = 1.0 - (v / 65535.0) * 2.0; // Flipped V-axis
-  
-          
-          // Optional: Clamp to [0, 1] if texture should not tile
-           //uv.x = constrain(uv.x, 0, 1);
-           //uv.y = constrain(uv.y, 0, 1);
-        }
+    if (stride == 16) {
+        int u = (data[off+16] & 0xFF) | ((data[off+17] & 0xFF) << 8);
+        int v = (data[off+18] & 0xFF) | ((data[off+19] & 0xFF) << 8);
+        
+        // CORRECTED: Remove the *2.0 scaling and add clamping
+        uv.x = constrain(u / 65535.0f, 0, 1);
+        uv.y = constrain(1.0f - (v / 65535.0f), 0, 1); // Flip V only
+        
+    } else if (stride == 20) {
+        uv.x = readFloat4(data, off + 16);
+        uv.y = 1.0f - readFloat4(data, off + 20);  // Keep V flip
+        
+        // Add clamping for float UVs if needed
+        uv.x = constrain(uv.x, 0, 1);
+        uv.y = constrain(uv.y, 0, 1);
+    }
         
         vertices.add(pos);
         uvs.add(uv);
-  
-        // Debug print for first few UVs
+
+        // First 10 UV debug output
         if (i < 10) {
-          println("Vertex " + i + " UV: " + uv.x + ", " + uv.y);
+            println("Vertex " + i + " UV: " + 
+                nf(uv.x, 0, 3) + ", " + 
+                nf(uv.y, 0, 3) + " " +
+                (stride == 16 ? "(short)" : "(float)"));
         }
-      }
+    }
   
       Section faceSec = sections.get(4);
       if (faceSec == null) return;
@@ -673,23 +678,33 @@ class RKModel {
     }
 
   void buildMesh() {
-    mesh = createShape();
-    mesh.beginShape(TRIANGLES);
-    mesh.texture(texture);
-    mesh.textureMode(NORMAL);
-    mesh.noStroke();
-    
-    for (int[] tri : triangles) {
-      for (int i=0; i<3; i++) {
-        PVector v = vertices.get(tri[i]);
-        PVector uv = uvs.get(tri[i]);
-        mesh.vertex(v.x, v.y, v.z, uv.x, uv.y);
+      mesh = createShape();
+      mesh.beginShape(TRIANGLES);
+      mesh.texture(texture);
+      mesh.textureMode(NORMAL);  // Requires UVs in [0,1] range
+      mesh.noStroke();
+      
+      // Verify texture dimensions
+      println("Texture size:", texture.width + "x" + texture.height);
+      
+      for (int[] tri : triangles) {
+          for (int i = 0; i < 3; i++) {
+              int vertIndex = tri[i];
+              PVector v = vertices.get(vertIndex);
+              PVector uv = uvs.get(vertIndex);
+              
+              // Final UV validation
+              if (vertIndex < 10) {
+                  println("Tri Vert", vertIndex, "UV:", uv.x, uv.y);
+              }
+              
+              mesh.vertex(v.x, v.y, v.z, uv.x, uv.y);
+          }
       }
-    }
-    
-    mesh.endShape();
-    println("Mesh built with", mesh.getVertexCount(), "vertices");
-    skinnedVerts = new ArrayList<>(vertices);
+      
+      mesh.endShape();
+      skinnedVerts = new ArrayList<>(vertices);
+      println("Mesh built with", mesh.getVertexCount(), "vertices");
   }
 
   PMatrix3D quatToMatrix(float[] q) {
