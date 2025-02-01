@@ -568,33 +568,37 @@ class RKModel {
       int stride = vertSec.byteLength / vertSec.count;
       println("Vertex stride:",stride,"bytes");
       
-      for (int i = 0; i < vertSec.count; i++) {
-        int off = vertSec.offset + i*stride;
+    
+    float uv_scale = 2; // Adjust this to match the Python script's uv_scale
+    final int USHORT_MAX = 65535; // Maximum value for an unsigned short
+    
+    for (int i = 0; i < vertSec.count; i++) {
+        int off = vertSec.offset + i * stride;
         
         PVector pos = new PVector(
-          readFloat4(data, off) * scale,       // X
-          readFloat4(data, off + 4) * scale,   // Y
-          readFloat4(data, off + 8) * scale    // Z
+            readFloat4(data, off) * scale,       // X
+            readFloat4(data, off + 4) * scale,   // Y
+            readFloat4(data, off + 8) * scale    // Z
         );
-          
+
         PVector uv = new PVector(0, 0);
-    if (stride == 16) {
-        int u = (data[off+16] & 0xFF) | ((data[off+17] & 0xFF) << 8);
-        int v = (data[off+18] & 0xFF) | ((data[off+19] & 0xFF) << 8);
-        
-        // CORRECTED: Remove the *2.0 scaling and add clamping
-        uv.x = constrain(u / 65535.0f, 0, 1);
-        uv.y = constrain(1.0f - (v / 65535.0f), 0, 1); // Flip V only
-        
-    } else if (stride == 20) {
-        uv.x = readFloat4(data, off + 16);
-        uv.y = 1.0f - readFloat4(data, off + 20);  // Keep V flip
-        
-        // Add clamping for float UVs if needed
-        uv.x = constrain(uv.x, 0, 1);
-        uv.y = constrain(uv.y, 0, 1);
-    }
-        
+        if (stride >= 12) {  // Minimum stride for position data (12 bytes)
+            if (stride == 12 || stride == 16) {  // Stride 12 or 16: UVs are unsigned shorts
+                int u = readShort2(data, off + 12) & 0xFFFF;  // UVs start at offset 12
+                int v = readShort2(data, off + 14) & 0xFFFF;
+                
+                // Normalize and scale UVs
+                uv.x = (u * uv_scale) / USHORT_MAX * scale;
+                uv.y = (v * uv_scale) / USHORT_MAX * scale;
+            } 
+            else if (stride == 24) {  // Stride 24: UVs are floats
+                uv.x = readFloat4(data, off + 12);  // UVs start at offset 12
+                uv.y = readFloat4(data, off + 16);
+                println("aaaaaaaaaaaaaaaaaaaaa");
+            }
+        }
+
+
         vertices.add(pos);
         uvs.add(uv);
 
