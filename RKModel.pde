@@ -179,6 +179,24 @@ class VertexWeight {
   }
 }
 
+class Submesh {
+    String name;
+    int trianglesCount; // Number of triangles
+    ArrayList<int[]> triangles; // Actual triangle data
+    int offset;
+    int material;
+    int unknown;
+
+    Submesh(String name, int trianglesCount, int offset, int material, int unknown) {
+        this.name = name;
+        this.trianglesCount = trianglesCount; // Store the number of triangles
+        this.offset = offset;
+        this.material = material;
+        this.unknown = unknown;
+        this.triangles = new ArrayList<>(); // Initialize the list for triangle data
+    }
+}
+
 class RKModel {
   RKHeader header;
   HashMap<Integer, Section> sections = new HashMap<>();
@@ -190,6 +208,9 @@ class RKModel {
   ArrayList<Bone> rootBones; // = new ArrayList<>();
   HashMap<Integer, Integer> boneIdMap;
   ArrayList<String> materials = new ArrayList<>();
+  int uvOffset;
+  String uvFormat;
+  float uvScale;
   SkinningData skinning = new SkinningData();
   ArrayList<AnimationClip> animations = new ArrayList<>();
   AnimationState currentAnim;
@@ -197,10 +218,23 @@ class RKModel {
   ArrayList<String> animationNames = new ArrayList<String>();
   boolean hasAnimations = false;
   PShape mesh;
+  PShape mainGeometry;
+  ArrayList<PShape> subShapeList = new ArrayList<PShape>();
+  ArrayList<Submesh> submeshes = new ArrayList<>();
+  ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
   PImage texture;
   float scale = 1;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
   boolean startup = true;
+  
+  String readString(byte[] data, int o, int maxLen) {
+    String s = "";
+    for (int i = 0; i < maxLen; i++) {
+      if (data[o + i] == 0) break;
+      s += char(data[o + i]);
+    }
+    return s.trim();
+  }
 
   RKModel(String filename, PImage tex) {
     byte[] data = loadBytes(filename);
@@ -210,6 +244,8 @@ class RKModel {
     if (!header.magic.equals("RKFORMAT")) return;
     
     loadSections(data);
+    readAttributes(data);
+    readSubmeshInfo(data);
     loadMaterials(data);
     loadBones(data);
     loadGeometry(data);
@@ -230,6 +266,65 @@ class RKModel {
       ));
       offset += 16;
     }
+  }
+  
+  void readAttributes(byte[] data) {
+      Section attrSec = sections.get(13);
+      if (attrSec == null) return;
+  
+      int offset = attrSec.offset;
+      int count = attrSec.count;
+  
+      for (int i = 0; i < count; i++) {
+          int attributeType = readShort2(data, offset);
+          int attributeOffset = data[offset + 2] & 0xFF;
+          int attributeFormat = data[offset + 3] & 0xFF;
+  
+          if (attributeType == 1030) {
+              this.uvOffset = attributeOffset;
+              this.uvFormat = "H"; // Unsigned short
+              this.uvScale = 2;
+          } else if (attributeType == 1026) {
+              this.uvOffset = attributeOffset;
+              this.uvFormat = "f"; // Float
+              this.uvScale = 1;
+          }
+  
+          offset += 4; // Move to the next attribute
+      }
+  }
+  
+  void readSubmeshInfo(byte[] data) {
+      Section submeshNamesSec = sections.get(16); // SUBMESH_NAMES section
+      Section submeshInfoSec = sections.get(1); // SUBMESH_INFO section
+       
+      if (submeshNamesSec == null || submeshInfoSec == null) return;
+  
+      ArrayList<String> submeshNames = new ArrayList<>();
+      int offset = submeshNamesSec.offset;
+      for (int i = 0; i < submeshNamesSec.count; i++) {
+          submeshNames.add(readString(data, offset, 64));
+          offset += 64;
+      }
+  
+      offset = submeshInfoSec.offset;
+      for (int i = 0; i < submeshInfoSec.count; i++) {
+          int triangles = readInt4(data, offset);
+          int triangleOffset = readInt4(data, offset + 4);
+          int materialIndex = readInt4(data, offset + 8);
+          int unknown = readInt4(data, offset + 12);
+  
+          Submesh submesh = new Submesh(
+              submeshNames.get(i),
+              triangles,
+              triangleOffset,
+              materialIndex,
+              unknown
+          );
+  
+          submeshes.add(submesh);
+          offset += 16;
+      }
   }
 
   void loadMaterials(byte[] data) {
@@ -547,6 +642,34 @@ class RKModel {
       matrix.set(m);
   }
   
+  
+  PMatrix3D quatToMatrix(float[] q) {
+    float w = q[0], x = q[1], y = q[2], z = q[3];
+    return new PMatrix3D(
+      1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w,   2*x*z + 2*y*w,   0,
+      2*x*y + 2*z*w,   1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w,   0,
+      2*x*z - 2*y*w,   2*y*z + 2*x*w,   1 - 2*x*x - 2*y*y, 0,
+      0, 0, 0, 1
+    );
+  }
+
+  void normalizeMatrix(PMatrix3D matrix) {
+      float[] m = new float[16];
+      matrix.get(m);
+  
+      // Normalize the upper 3x3 rotation/scale part of the matrix
+      for (int i = 0; i < 3; i++) {
+          float len = sqrt(m[i] * m[i] + m[i + 4] * m[i + 4] + m[i + 8] * m[i + 8]);
+          if (len > 0) {
+              m[i] /= len;
+              m[i + 4] /= len;
+              m[i + 8] /= len;
+          }
+      }
+  
+      matrix.set(m);
+  }
+  
   // Print Bone Matrix
   void printMatrix(PMatrix3D mat) {
     // PMatrix3D stores values in column-major order
@@ -562,164 +685,310 @@ class RKModel {
   }
 
   void loadGeometry(byte[] data) {
+      // Read attributes first to get UV format
+      readAttributes(data);
+      
       Section vertSec = sections.get(3);
-      if (vertSec == null) return;
-      
-      int stride = vertSec.byteLength / vertSec.count;
-      println("Vertex stride:",stride,"bytes");
-      
-    
-    float uv_scale = 2; // Adjust this to match the Python script's uv_scale
-    final int USHORT_MAX = 65535; // Maximum value for an unsigned short
-    
-    for (int i = 0; i < vertSec.count; i++) {
-        int off = vertSec.offset + i * stride;
-        
-        PVector pos = new PVector(
-            readFloat4(data, off) * scale,       // X
-            readFloat4(data, off + 4) * scale,   // Y
-            readFloat4(data, off + 8) * scale    // Z
-        );
-
-        PVector uv = new PVector(0, 0);
-        if (stride >= 12) {  // Minimum stride for position data (12 bytes)
-            if (stride == 12 || stride == 16) {  // Stride 12 or 16: UVs are unsigned shorts
-                int u = readShort2(data, off + 12) & 0xFFFF;  // UVs start at offset 12
-                int v = readShort2(data, off + 14) & 0xFFFF;
-                
-                // Normalize and scale UVs
-                uv.x = (u * uv_scale) / USHORT_MAX * scale;
-                uv.y = (v * uv_scale) / USHORT_MAX * scale;
-            } 
-            else if (stride == 24) {  // Stride 24: UVs are floats
-                uv.x = readFloat4(data, off + 12);  // UVs start at offset 12
-                uv.y = readFloat4(data, off + 16);
-                println("aaaaaaaaaaaaaaaaaaaaa");
-            }
-        }
-
-
-        vertices.add(pos);
-        uvs.add(uv);
-
-        // First 10 UV debug output
-        if (i < 10) {
-            println("Vertex " + i + " UV: " + 
-                nf(uv.x, 0, 3) + ", " + 
-                nf(uv.y, 0, 3) + " " +
-                (stride == 16 ? "(short)" : "(float)"));
-        }
-    }
+      if (vertSec != null) {
+          int stride = vertSec.byteLength / vertSec.count;
+          println("Vertex stride:", stride, "bytes");
   
-      Section faceSec = sections.get(4);
-      if (faceSec == null) return;
-      
-      boolean use32bit = vertices.size() > 65535;
-      int indexSize = use32bit ? 4 : 2;
-      int triCount = faceSec.byteLength / (indexSize * 3);
-      
-      println("Loading",triCount,"triangles with",(use32bit ? 32 : 16)+"-bit indices");
-      for (int i = 0; i < triCount; i++) {
-        int off = faceSec.offset + i * indexSize * 3;
-        int[] tri = new int[3];
-        
-        for (int j = 0; j < 3; j++) {
-          if (use32bit) {
-            tri[j] = readInt4(data, off + (j*4));
-          } else {
-            tri[j] = readShort2(data, off + (j*2)) & 0xFFFF;
+          for (int i = 0; i < vertSec.count; i++) {
+              int off = vertSec.offset + i * stride;
+              PVector pos = new PVector(
+                  readFloat4(data, off) * scale,
+                  readFloat4(data, off + 4) * scale,
+                  readFloat4(data, off + 8) * scale
+              );
+  
+              PVector uv = new PVector(0, 0);
+              if (uvFormat != null) {
+                  int uvOff = off + uvOffset;
+                  if (uvFormat.equals("H")) {
+                      int u = readShort2(data, uvOff) & 0xFFFF;
+                      int v = readShort2(data, uvOff + 2) & 0xFFFF;
+                      uv.x = (u * uvScale) / 65535.0f;
+                      uv.y = (v * uvScale) / 65535.0f;
+                  } else if (uvFormat.equals("f")) {
+                      uv.x = readFloat4(data, uvOff);
+                      uv.y = readFloat4(data, uvOff + 4);
+                  }
+              }
+  
+              vertices.add(pos);
+              uvs.add(uv);
           }
-        }
-        triangles.add(tri);
       }
-      println("Successfully loaded",triangles.size(),"triangles");
-        
-      Section weightSec = sections.get(17);
-      if (weightSec != null) {
+  
+      // Load triangles for the main mesh
+      Section faceSec = sections.get(4);
+      if (faceSec != null) {
+          boolean use32bit = vertices.size() > 65535;
+          int indexSize = use32bit ? 4 : 2;
+          int triCount = faceSec.byteLength / (indexSize * 3);
+          
+          println("Loading", triCount, "triangles with", (use32bit ? 32 : 16) + "-bit indices");
+          for (int i = 0; i < triCount; i++) {
+              int off = faceSec.offset + i * indexSize * 3;
+              int[] tri = new int[3];
+              
+              for (int j = 0; j < 3; j++) {
+                  if (use32bit) {
+                      tri[j] = readInt4(data, off + (j * 4));
+                  } else {
+                      tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
+                  }
+              }
+              triangles.add(tri);
+          }
+          println("Successfully loaded", triangles.size(), "triangles");
+      
+  
+      if (submeshes != null && !submeshes.isEmpty()) {
+          for (Submesh submesh : submeshes) {
+              int start = faceSec.offset + submesh.offset;
+              int end = start + (submesh.trianglesCount * 3 * indexSize);
+  
+              for (int i = 0; i < submesh.trianglesCount; i++) {
+                  int off = start + (i * 3 * indexSize);
+                  int[] tri = new int[3];
+                  
+                  for (int j = 0; j < 3; j++) {
+                      if (use32bit) {
+                          tri[j] = readInt4(data, off + (j * 4));
+                      } else {
+                          tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
+                      }
+                  }
+                  submesh.triangles.add(tri);
+              }
+          }
+      }
+   }
+
+    Section weightSec = sections.get(17);
+    if (weightSec != null) {
         int weightSize = weightSec.byteLength / weightSec.count;
         for (int i = 0; i < weightSec.count; i++) {
-          int off = weightSec.offset + i * weightSize;
-          ArrayList<VertexWeight> vWeights = new ArrayList<>();
-  
-          // Read 4 bone IDs (1 byte each) followed by 4 weights (2 bytes each)
-          float totalWeight = 0;
-          for (int j = 0; j < 4; j++) {
-            int boneId = data[off + j] & 0xFF; // 1-byte bone IDs
-            Integer boneIndex = this.boneIdMap.get(boneId);
-  
-            if (boneIndex == null) {
-              println("Missing bone mapping for ID: " + boneId);
-              continue;
+            int off = weightSec.offset + i * weightSize;
+            ArrayList<VertexWeight> vWeights = new ArrayList<>();
+
+            // Read 4 bone IDs (1 byte each) followed by 4 weights (2 bytes each)
+            float totalWeight = 0;
+            for (int j = 0; j < 4; j++) {
+                int boneId = data[off + j] & 0xFF; // 1-byte bone IDs
+                Integer boneIndex = this.boneIdMap.get(boneId);
+
+                if (boneIndex == null) {
+                    println("Missing bone mapping for ID: " + boneId);
+                    continue;
+                }
+
+                // Read weight (2 bytes per weight after 4 bone IDs)
+                int weightOffset = off + 4 + (j * 2);
+                int weightValue = readShort2(data, weightOffset) & 0xFFFF;
+                float weight = weightValue / 65535.0f;
+
+                if (weight > 0) {
+                    vWeights.add(new VertexWeight(boneIndex, weight));
+                    totalWeight += weight;
+                }
             }
-  
-            // Read weight (2 bytes per weight after 4 bone IDs)
-            int weightOffset = off + 4 + (j * 2);
-            int weightValue = readShort2(data, weightOffset) & 0xFFFF;
-            float weight = weightValue / 65535.0f;
-  
-            if (weight > 0) {
-              vWeights.add(new VertexWeight(boneIndex, weight));
-              totalWeight += weight;
+
+            // Normalize weights to ensure they sum to 1.0
+            if (totalWeight > 0) {
+                for (VertexWeight w : vWeights) {
+                    w.weight /= totalWeight;
+                }
             }
-          }
-  
-          // Normalize weights to ensure they sum to 1.0
-          if (totalWeight > 0) {
-            for (VertexWeight w : vWeights) {
-              w.weight /= totalWeight;
-            }
-          }
-  
-          skinning.weights.add(vWeights);
+
+            skinning.weights.add(vWeights);
         }
-      } else {
+    } else {
         // Add empty weights if no weight section found
         for (int i = 0; i < vertices.size(); i++) {
-          skinning.weights.add(new ArrayList<VertexWeight>());
+            skinning.weights.add(new ArrayList<VertexWeight>());
         }
-      }
-      println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
     }
+    println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
+}
 
+
+ /*
+void buildMesh() {
+    // Create the main group shape.
+    mesh = createShape(GROUP);
+
+    // Create and build the main geometry shape.
+    mainGeometry = createShape();
+    mainGeometry.beginShape(TRIANGLES);
+    mainGeometry.texture(texture);
+    mainGeometry.textureMode(NORMAL);  // Requires UVs in [0,1] range
+    mainGeometry.noStroke();
+    
+    println("Texture size:", texture.width + "x" + texture.height);
+    
+    // Add vertices to the main geometry (using your global triangles list)
+    for (int[] tri : triangles) {
+        for (int i = 0; i < 3; i++) {
+            int vertIndex = tri[i];
+            PVector v = vertices.get(vertIndex);
+            PVector uv = uvs.get(vertIndex);
+            
+            // Final UV validation
+            if (vertIndex < 10) {
+                println("Tri Vert", vertIndex, "UV:", uv.x, uv.y);
+            }
+            
+            mainGeometry.vertex(v.x, v.y, v.z, uv.x, uv.y);
+        }
+    }
+    mainGeometry.endShape();
+    
+    // Add the main geometry as the first child of the group.
+    mesh.addChild(mainGeometry);
+    
+    // Build submeshes and add them as children.
+    if (submeshes != null && !submeshes.isEmpty()) {
+        for (Submesh submesh : submeshes) {
+            PShape part = createShape();
+            part.beginShape(TRIANGLES);
+            part.texture(texture);
+            part.textureMode(NORMAL);
+            part.noStroke();
+            
+            println("Building submesh:", submesh.name, 
+                   "with", submesh.triangles.size(), "triangles",
+                   "material:", materials.get(submesh.material));
+    
+            // For each triangle in the submesh, add vertices with UVs.
+            for (int[] tri : submesh.triangles) {
+                for (int index : tri) {
+                    if (index >= vertices.size()) {
+                        println("Error: Invalid vertex index", index);
+                        continue;
+                    }
+                    PVector v = vertices.get(index);
+                    PVector uv = uvs.get(index);
+                    part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+                }
+            }
+            part.endShape();
+            
+            // Add the submesh shape as a child to the group.
+            mesh.addChild(part);
+            subShapeList.add(part);  // Also keep a reference for later updating.
+        }
+        println("Added", submeshes.size(), "submeshes as children to the main mesh");
+    }
+    
+    // Copy the original vertices into skinnedVerts for later animation updates.
+    skinnedVerts = new ArrayList<>(vertices);
+}
+
+void updateMeshVertices() {
+    // --- Update main geometry (child 0) ---
+    int vertexCounter = 0;  // This counts through the vertices as they were added.
+    // For the main geometry, we used the global "triangles" list.
+    for (int[] tri : triangles) {
+        for (int j = 0; j < 3; j++) {
+            int originalIndex = tri[j];
+            if (originalIndex < skinnedVerts.size()) {
+                PVector v = skinnedVerts.get(originalIndex);
+                mainGeometry.setVertex(vertexCounter, v.x, v.y, v.z);
+            }
+            vertexCounter++;
+        }
+    }
+    
+    // --- Update each submesh geometry ---
+    // Assuming the submeshes were built in the same order as in subShapeList.
+    for (int s = 0; s < submeshes.size(); s++) {
+        Submesh submesh = submeshes.get(s);
+        PShape subShape = subShapeList.get(s);
+        int subVertexCounter = 0;
+        for (int[] tri : submesh.triangles) {
+            for (int j = 0; j < 3; j++) {
+                int originalIndex = tri[j];
+                if (originalIndex < skinnedVerts.size()) {
+                    PVector v = skinnedVerts.get(originalIndex);
+                    subShape.setVertex(subVertexCounter, v.x, v.y, v.z);
+                }
+                subVertexCounter++;
+            }
+        }
+    }
+}
+ */
+
+
+// /*
   void buildMesh() {
-      mesh = createShape();
-      mesh.beginShape(TRIANGLES);
-      mesh.texture(texture);
-      mesh.textureMode(NORMAL);  // Requires UVs in [0,1] range
-      mesh.noStroke();
-      
-      // Verify texture dimensions
-      println("Texture size:", texture.width + "x" + texture.height);
-      
-      for (int[] tri : triangles) {
-          for (int i = 0; i < 3; i++) {
-              int vertIndex = tri[i];
-              PVector v = vertices.get(vertIndex);
-              PVector uv = uvs.get(vertIndex);
-              
-              // Final UV validation
-              if (vertIndex < 10) {
-                  println("Tri Vert", vertIndex, "UV:", uv.x, uv.y);
+      // Create the main mesh as a GROUP shape
+      mesh = createShape(GROUP); 
+  
+      // Ensure skinnedVerts is initialized
+      skinnedVerts = new ArrayList<>(vertices);
+  
+      // Build submeshes and add them as children to the main mesh
+      if (submeshes != null && !submeshes.isEmpty()) {
+          for (Submesh submesh : submeshes) {
+              PShape part = createShape();
+              part.beginShape(TRIANGLES);
+              part.texture(texture);
+              part.textureMode(NORMAL);
+              part.noStroke();
+  
+              println("Building submesh:", submesh.name, 
+                     "with", submesh.triangles.size(), "triangles",
+                     "material:", materials.get(submesh.material));
+  
+              for (int[] tri : submesh.triangles) {
+                  for (int index : tri) {
+                      if (index >= vertices.size()) {
+                          println("Error: Invalid vertex index", index);
+                          continue;
+                      }
+                      PVector v = vertices.get(index);
+                      PVector uv = uvs.get(index);
+                      part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+                  }
               }
               
-              mesh.vertex(v.x, v.y, v.z, uv.x, uv.y);
+              part.endShape();
+              mesh.addChild(part); // Add the submesh as a child to the GROUP
           }
+          println("Added", submeshes.size(), "submeshes as children to the main mesh");
+      } else {
+          println("Warning: No submeshes found!");
       }
-      
-      mesh.endShape();
-      skinnedVerts = new ArrayList<>(vertices);
-      println("Mesh built with", mesh.getVertexCount(), "vertices");
   }
-
-  PMatrix3D quatToMatrix(float[] q) {
-    float w = q[0], x = q[1], y = q[2], z = q[3];
-    return new PMatrix3D(
-      1 - 2*y*y - 2*z*z, 2*x*y - 2*z*w,   2*x*z + 2*y*w,   0,
-      2*x*y + 2*z*w,   1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w,   0,
-      2*x*z - 2*y*w,   2*y*z + 2*x*w,   1 - 2*x*x - 2*y*y, 0,
-      0, 0, 0, 1
-    );
+  
+  void updateMeshVertices() {
+      if (mesh == null) {
+          println("Error: Mesh is null, cannot update vertices.");
+          return;
+      }
+  
+      int submeshIndex = 0;
+      for (PShape part : mesh.getChildren()) {
+          int vertexIndex = 0;
+          Submesh submesh = submeshes.get(submeshIndex);
+  
+          for (int[] tri : submesh.triangles) {
+              for (int j = 0; j < 3; j++) {
+                  int originalIndex = tri[j];
+                  if (originalIndex < skinnedVerts.size()) {
+                      PVector v = skinnedVerts.get(originalIndex);
+                      part.setVertex(vertexIndex, v.x, v.y, v.z); 
+                  }
+                  vertexIndex++;
+              }
+          }
+          submeshIndex++;
+      }
   }
+//*/
 
   void applySkinning() {
       for (int i = 0; i < vertices.size(); i++) {
@@ -774,37 +1043,6 @@ class RKModel {
       if (startup) {
           startup = false;
       }
-  }
-  
-  void updateMeshVertices() {
-      int vertexIndex = 0;
-      for (int[] tri : triangles) {
-          for (int j = 0; j < 3; j++) {
-              int originalIndex = tri[j]; // Get original vertex index from triangle data
-              if (originalIndex < skinnedVerts.size()) {
-                  PVector v = skinnedVerts.get(originalIndex); // Fetch skinned position
-                  mesh.setVertex(vertexIndex, v.x, v.y, v.z); // Update mesh vertex
-              }
-              vertexIndex++;
-          }
-      }
-  }
-
-  void normalizeMatrix(PMatrix3D matrix) {
-      float[] m = new float[16];
-      matrix.get(m);
-  
-      // Normalize the upper 3x3 rotation/scale part of the matrix
-      for (int i = 0; i < 3; i++) {
-          float len = sqrt(m[i] * m[i] + m[i + 4] * m[i + 4] + m[i + 8] * m[i + 8]);
-          if (len > 0) {
-              m[i] /= len;
-              m[i + 4] /= len;
-              m[i + 8] /= len;
-          }
-      }
-  
-      matrix.set(m);
   }
   
   void printSummary() {
