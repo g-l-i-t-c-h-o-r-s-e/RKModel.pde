@@ -707,8 +707,10 @@ class RKModel {
                   if (uvFormat.equals("H")) {
                       int u = readShort2(data, uvOff) & 0xFFFF;
                       int v = readShort2(data, uvOff + 2) & 0xFFFF;
-                      uv.x = (u * uvScale) / 65535.0f;
-                      uv.y = (v * uvScale) / 65535.0f;
+                      //uv.x = (u * uvScale) / 65535.0f;
+                      //uv.y = (v * uvScale) / 65535.0f;
+                      uv.x = u / 65535f;
+                      uv.y = v / 65535f;
                   } else if (uvFormat.equals("f")) {
                       uv.x = readFloat4(data, uvOff);
                       uv.y = readFloat4(data, uvOff + 4);
@@ -942,6 +944,8 @@ void updateMeshVertices() {
               println("Building submesh:", submesh.name, 
                      "with", submesh.triangles.size(), "triangles",
                      "material:", materials.get(submesh.material));
+                     
+              int uvIndex = 0;
   
               for (int[] tri : submesh.triangles) {
                   for (int index : tri) {
@@ -952,9 +956,16 @@ void updateMeshVertices() {
                       PVector v = vertices.get(index);
                       PVector uv = uvs.get(index);
                       part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+                      
+                      if (uvIndex < 10) {
+                      //println("Vertex", index, "UV:", uv.x, uv.y);
+                      System.out.printf("Vertex %d UV: %.16f %.16f %s%n", index, uv.x, uv.y, submesh.name);
+                      uvIndex += 1;
+                      }
                   }
               }
-              
+              println("First Ten Vertices and UVs for each submesh");
+
               part.endShape();
               mesh.addChild(part); // Add the submesh as a child to the GROUP
           }
