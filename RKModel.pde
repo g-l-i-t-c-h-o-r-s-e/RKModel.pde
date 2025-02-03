@@ -582,21 +582,26 @@ class RKModel {
         );
 
         PVector uv = new PVector(0, 0);
-        if (stride >= 12) {  // Minimum stride for position data (12 bytes)
-            if (stride == 12 || stride == 16) {  // Stride 12 or 16: UVs are unsigned shorts
-                int u = readShort2(data, off + 12) & 0xFFFF;  // UVs start at offset 12
-                int v = readShort2(data, off + 14) & 0xFFFF;
-                
-                // Normalize and scale UVs
-                uv.x = (u * uv_scale) / USHORT_MAX * scale;
-                uv.y = (v * uv_scale) / USHORT_MAX * scale;
-            } 
-            else if (stride == 24) {  // Stride 24: UVs are floats
-                uv.x = readFloat4(data, off + 12);  // UVs start at offset 12
-                uv.y = readFloat4(data, off + 16);
-                println("aaaaaaaaaaaaaaaaaaaaa");
-            }
+        // Handle UVs based on stride
+        if (stride == 16 || stride == 28) {
+            int uvOffset = (stride == 28) ? 20 : 12; // Adjust for 28-byte stride
+            int u = readShort2(data, off + uvOffset);
+            int v = readShort2(data, off + uvOffset + 2);
+            uv.x = u / 32767.0f;
+            uv.y = v / 32767.0f;
+        } else if (stride == 20) {
+            float u_float = readFloat4(data, off + 12);
+            float v_float = readFloat4(data, off + 16);
+            uv.x = u_float;
+            uv.y = v_float;
         }
+        
+        // Remap UVs from [-1,1] to [0,1]
+        uv.x = (uv.x + 1.0f) / 2.0f;
+        uv.y = (uv.y + 1.0f) / 2.0f;
+        
+        //idk, just testing.
+        uv.y = uv.y * 2;
 
 
         vertices.add(pos);
