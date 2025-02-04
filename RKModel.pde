@@ -702,20 +702,22 @@ class RKModel {
               );
   
               PVector uv = new PVector(0, 0);
-              if (uvFormat != null) {
-                  int uvOff = off + uvOffset;
-                  if (uvFormat.equals("H")) {
-                      int u = readShort2(data, uvOff) & 0xFFFF;
-                      int v = readShort2(data, uvOff + 2) & 0xFFFF;
-                      //uv.x = (u * uvScale) / 65535.0f;
-                      //uv.y = (v * uvScale) / 65535.0f;
-                      uv.x = u / 65535f;
-                      uv.y = v / 65535f;
-                  } else if (uvFormat.equals("f")) {
-                      uv.x = readFloat4(data, uvOff);
-                      uv.y = readFloat4(data, uvOff + 4);
-                  }
+              // Handle UVs based on stride
+              if (stride == 16 || stride == 28) {
+                  int uvOffset = (stride == 28) ? 20 : 12; // Adjust for 28-byte stride
+                  int u = readShort2(data, off + uvOffset);
+                  int v = readShort2(data, off + uvOffset + 2);
+                  uv.x = u / 32767.0f;
+                  uv.y = v / 32767.0f;
+              } else if (stride == 20) {
+                  float u_float = readFloat4(data, off + 12);
+                  float v_float = readFloat4(data, off + 16);
+                  uv.x = u_float;
+                  uv.y = v_float;
               }
+  
+              uv.y = (uv.y + 1.0f) / 2.0f;
+              uv.y *= 2;
   
               vertices.add(pos);
               uvs.add(uv);
