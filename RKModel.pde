@@ -313,6 +313,7 @@ class RKModel {
           int triangleOffset = readInt4(data, offset + 4);
           int materialIndex = readInt4(data, offset + 8);
           int unknown = readInt4(data, offset + 12);
+          println(triangles);
   
           Submesh submesh = new Submesh(
               submeshNames.get(i),
@@ -321,7 +322,7 @@ class RKModel {
               materialIndex,
               unknown
           );
-  
+          println(submesh.offset);
           submeshes.add(submesh);
           offset += 16;
       }
@@ -704,7 +705,7 @@ class RKModel {
               PVector uv = new PVector(0, 0);
               // Handle UVs based on stride
               if (stride == 16 || stride == 28) {
-                  int uvOffset = (stride == 28) ? 20 : 12; // Adjust for 28-byte stride
+                  //int uvOffset = (stride == 28) ? 20 : 12; // Adjust for 28-byte stride
                   int u = readShort2(data, off + uvOffset);
                   int v = readShort2(data, off + uvOffset + 2);
                   uv.x = u / 32767.0f;
@@ -717,20 +718,20 @@ class RKModel {
               }
   
               uv.y = (uv.y + 1.0f) / 2.0f;
-              uv.y *= 2;
+              uv.y *= this.uvScale;
   
               vertices.add(pos);
               uvs.add(uv);
           }
       }
   
-      // Load triangles for the main mesh
       Section faceSec = sections.get(4);
       if (faceSec != null) {
           boolean use32bit = vertices.size() > 65535;
           int indexSize = use32bit ? 4 : 2;
           int triCount = faceSec.byteLength / (indexSize * 3);
-          
+          int bytesPerTriangle = 3 * indexSize;
+
           println("Loading", triCount, "triangles with", (use32bit ? 32 : 16) + "-bit indices");
           for (int i = 0; i < triCount; i++) {
               int off = faceSec.offset + i * indexSize * 3;
@@ -750,13 +751,31 @@ class RKModel {
   
       if (submeshes != null && !submeshes.isEmpty()) {
           for (Submesh submesh : submeshes) {
-              int start = faceSec.offset + submesh.offset;
-              int end = start + (submesh.trianglesCount * 3 * indexSize);
-  
+              // Calculate byte offset using index size
+              int start = faceSec.offset + (submesh.offset * indexSize);
+              
+              // Debug: Print submesh info
+              println("Loading submesh: " + submesh.name + 
+                      ", start: " + start + 
+                      ", triangles: " + submesh.trianglesCount);
+      
+              // Ensure the start offset is within bounds
+              if (start < 0 || start >= data.length) {
+                  println("Error: Invalid start offset for submesh " + submesh.name);
+                  continue;
+              }
+      
               for (int i = 0; i < submesh.trianglesCount; i++) {
-                  int off = start + (i * 3 * indexSize);
+                  // Calculate the offset for the current triangle
+                  int off = start + (i * bytesPerTriangle);
+      
+                  // Ensure the offset is within bounds
+                  if (off + bytesPerTriangle > data.length) {
+                      println("Error: Invalid triangle offset for submesh " + submesh.name);
+                      break;
+                  }
+      
                   int[] tri = new int[3];
-                  
                   for (int j = 0; j < 3; j++) {
                       if (use32bit) {
                           tri[j] = readInt4(data, off + (j * 4));
@@ -818,245 +837,126 @@ class RKModel {
 }
 
 
- /*
 void buildMesh() {
-    // Create the main group shape.
-    mesh = createShape(GROUP);
-
-    // Create and build the main geometry shape.
-    mainGeometry = createShape();
-    mainGeometry.beginShape(TRIANGLES);
-    mainGeometry.texture(texture);
-    mainGeometry.textureMode(NORMAL);  // Requires UVs in [0,1] range
-    mainGeometry.noStroke();
+    // Create the main mesh using the first submesh
+    Submesh mainSubmesh = submeshes.get(0);
+    mesh = createShape(GROUP); 
+    mainGeometry = createSubmeshShape(mainSubmesh);
+    mesh.addChild(mainGeometry); // First submesh becomes main geometry
     
-    println("Texture size:", texture.width + "x" + texture.height);
     
-    // Add vertices to the main geometry (using your global triangles list)
-    for (int[] tri : triangles) {
-        for (int i = 0; i < 3; i++) {
-            int vertIndex = tri[i];
-            PVector v = vertices.get(vertIndex);
-            PVector uv = uvs.get(vertIndex);
-            
-            // Final UV validation
-            if (vertIndex < 10) {
-                println("Tri Vert", vertIndex, "UV:", uv.x, uv.y);
-            }
-            
-            mainGeometry.vertex(v.x, v.y, v.z, uv.x, uv.y);
-        }
+    // Add other submeshes as children
+    for (int i = 1; i < submeshes.size(); i++) {
+        Submesh childSubmesh = submeshes.get(i);
+        PShape childShape = createSubmeshShape(childSubmesh);
+        mesh.addChild(childShape); // Add as child to main mesh
     }
-    mainGeometry.endShape();
-    
-    // Add the main geometry as the first child of the group.
-    mesh.addChild(mainGeometry);
-    
-    // Build submeshes and add them as children.
-    if (submeshes != null && !submeshes.isEmpty()) {
-        for (Submesh submesh : submeshes) {
-            PShape part = createShape();
-            part.beginShape(TRIANGLES);
-            part.texture(texture);
-            part.textureMode(NORMAL);
-            part.noStroke();
-            
-            println("Building submesh:", submesh.name, 
-                   "with", submesh.triangles.size(), "triangles",
-                   "material:", materials.get(submesh.material));
-    
-            // For each triangle in the submesh, add vertices with UVs.
-            for (int[] tri : submesh.triangles) {
-                for (int index : tri) {
-                    if (index >= vertices.size()) {
-                        println("Error: Invalid vertex index", index);
-                        continue;
-                    }
-                    PVector v = vertices.get(index);
-                    PVector uv = uvs.get(index);
-                    part.vertex(v.x, v.y, v.z, uv.x, uv.y);
-                }
-            }
-            part.endShape();
-            
-            // Add the submesh shape as a child to the group.
-            mesh.addChild(part);
-            subShapeList.add(part);  // Also keep a reference for later updating.
-        }
-        println("Added", submeshes.size(), "submeshes as children to the main mesh");
-    }
-    
-    // Copy the original vertices into skinnedVerts for later animation updates.
-    skinnedVerts = new ArrayList<>(vertices);
 }
 
-void updateMeshVertices() {
-    // --- Update main geometry (child 0) ---
-    int vertexCounter = 0;  // This counts through the vertices as they were added.
-    // For the main geometry, we used the global "triangles" list.
-    for (int[] tri : triangles) {
-        for (int j = 0; j < 3; j++) {
-            int originalIndex = tri[j];
-            if (originalIndex < skinnedVerts.size()) {
-                PVector v = skinnedVerts.get(originalIndex);
-                mainGeometry.setVertex(vertexCounter, v.x, v.y, v.z);
-            }
-            vertexCounter++;
+PShape createSubmeshShape(Submesh submesh) {
+    PShape part = createShape();
+    part.beginShape(TRIANGLES);
+    part.texture(texture);
+    part.textureMode(NORMAL);
+    part.noStroke();
+    
+    for (int[] tri : submesh.triangles) {
+        for (int index : tri) {
+            PVector v = vertices.get(index);
+            PVector uv = uvs.get(index);
+            part.vertex(v.x, v.y, v.z, uv.x, uv.y);
         }
     }
-    
-    // --- Update each submesh geometry ---
-    // Assuming the submeshes were built in the same order as in subShapeList.
-    for (int s = 0; s < submeshes.size(); s++) {
-        Submesh submesh = submeshes.get(s);
-        PShape subShape = subShapeList.get(s);
-        int subVertexCounter = 0;
+    part.endShape();
+    return part;
+}
+  
+void updateMeshVertices() {
+    if (mesh == null) {
+        println("Error: Mesh is null, cannot update vertices.");
+        return;
+    }
+
+    int submeshIndex = 0;
+    for (PShape part : mesh.getChildren()) {
+        int vertexIndex = 0;
+        Submesh submesh = submeshes.get(submeshIndex);
+
         for (int[] tri : submesh.triangles) {
             for (int j = 0; j < 3; j++) {
                 int originalIndex = tri[j];
                 if (originalIndex < skinnedVerts.size()) {
                     PVector v = skinnedVerts.get(originalIndex);
-                    subShape.setVertex(subVertexCounter, v.x, v.y, v.z);
+                    part.setVertex(vertexIndex, v.x, v.y, v.z); 
                 }
-                subVertexCounter++;
+                vertexIndex++;
             }
         }
+        submeshIndex++;
     }
 }
- */
-
-
-// /*
-  void buildMesh() {
-      // Create the main mesh as a GROUP shape
-      mesh = createShape(GROUP); 
-  
-      // Ensure skinnedVerts is initialized
-      skinnedVerts = new ArrayList<>(vertices);
-  
-      // Build submeshes and add them as children to the main mesh
-      if (submeshes != null && !submeshes.isEmpty()) {
-          for (Submesh submesh : submeshes) {
-              PShape part = createShape();
-              part.beginShape(TRIANGLES);
-              part.texture(texture);
-              part.textureMode(NORMAL);
-              part.noStroke();
-  
-              println("Building submesh:", submesh.name, 
-                     "with", submesh.triangles.size(), "triangles",
-                     "material:", materials.get(submesh.material));
-                     
-              int uvIndex = 0;
-  
-              for (int[] tri : submesh.triangles) {
-                  for (int index : tri) {
-                      if (index >= vertices.size()) {
-                          println("Error: Invalid vertex index", index);
-                          continue;
-                      }
-                      PVector v = vertices.get(index);
-                      PVector uv = uvs.get(index);
-                      part.vertex(v.x, v.y, v.z, uv.x, uv.y);
-                      
-                      if (uvIndex < 10) {
-                      //println("Vertex", index, "UV:", uv.x, uv.y);
-                      System.out.printf("Vertex %d UV: %.16f %.16f %s%n", index, uv.x, uv.y, submesh.name);
-                      uvIndex += 1;
-                      }
-                  }
-              }
-              println("First Ten Vertices and UVs for each submesh");
-
-              part.endShape();
-              mesh.addChild(part); // Add the submesh as a child to the GROUP
-          }
-          println("Added", submeshes.size(), "submeshes as children to the main mesh");
-      } else {
-          println("Warning: No submeshes found!");
-      }
-  }
-  
-  void updateMeshVertices() {
-      if (mesh == null) {
-          println("Error: Mesh is null, cannot update vertices.");
-          return;
-      }
-  
-      int submeshIndex = 0;
-      for (PShape part : mesh.getChildren()) {
-          int vertexIndex = 0;
-          Submesh submesh = submeshes.get(submeshIndex);
-  
-          for (int[] tri : submesh.triangles) {
-              for (int j = 0; j < 3; j++) {
-                  int originalIndex = tri[j];
-                  if (originalIndex < skinnedVerts.size()) {
-                      PVector v = skinnedVerts.get(originalIndex);
-                      part.setVertex(vertexIndex, v.x, v.y, v.z); 
-                  }
-                  vertexIndex++;
-              }
-          }
-          submeshIndex++;
-      }
-  }
 //*/
 
   void applySkinning() {
-      for (int i = 0; i < vertices.size(); i++) {
-          PVector original = vertices.get(i);
-          PVector skinned = new PVector();
-          ArrayList<VertexWeight> weights = skinning.weights.get(i);
-          float totalWeight = 0;
-  
-          // Normalize weights to ensure they sum to 1.0
-          float weightSum = 0;
-          for (VertexWeight w : weights) {
-              weightSum += w.weight;
-          }
-          if (weightSum > 0) {
-              for (VertexWeight w : weights) {
-                  w.weight /= weightSum;
-              }
-          }
-  
-          // Apply skinning
-          for (VertexWeight w : weights) {
-              if (w.boneIndex >= bones.size()) continue;
-              Bone bone = bones.get(w.boneIndex);
-  
-              // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
-              PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
-                  ? bone.restPoseMatrix.get() 
-                  : bone.animatedMatrix.get();
-  
-              // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
-              skinningMatrix.apply(bone.inverseBindMatrix);
-  
-              // Transform vertex
-              PVector transformed = new PVector();
-              skinningMatrix.mult(original, transformed);
-              transformed.mult(w.weight);
-              skinned.add(transformed);
-              totalWeight += w.weight;
-          }
-  
-          // Normalize if weights don't sum to 1.0
-          if (totalWeight > 0.001) {
-              skinned.mult(1.0 / totalWeight);
-          } else {
-              skinned = original.copy();
-          }
-  
-          skinnedVerts.set(i, skinned);
-      }
-      updateMeshVertices();
-  
-      if (startup) {
-          startup = false;
-      }
+  // Initialize skinnedVerts with original vertex positions
+  skinnedVerts = new ArrayList<>(vertices.size());
+  for (PVector v : vertices) {
+      skinnedVerts.add(v.copy());
   }
+    
+    for (int i = 0; i < vertices.size(); i++) {
+        PVector original = vertices.get(i);
+        PVector skinned = new PVector();
+        ArrayList<VertexWeight> weights = skinning.weights.get(i);
+        float totalWeight = 0;
+
+        // Normalize weights to ensure they sum to 1.0
+        float weightSum = 0;
+        for (VertexWeight w : weights) {
+            weightSum += w.weight;
+        }
+        if (weightSum > 0) {
+            for (VertexWeight w : weights) {
+                w.weight /= weightSum;
+            }
+        }
+
+        // Apply skinning
+        for (VertexWeight w : weights) {
+            if (w.boneIndex >= bones.size()) continue;
+            Bone bone = bones.get(w.boneIndex);
+
+            // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
+            PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
+                ? bone.restPoseMatrix.get() 
+                : bone.animatedMatrix.get();
+
+            // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
+            skinningMatrix.apply(bone.inverseBindMatrix);
+
+            // Transform vertex
+            PVector transformed = new PVector();
+            skinningMatrix.mult(original, transformed);
+            transformed.mult(w.weight);
+            skinned.add(transformed);
+            totalWeight += w.weight;
+        }
+
+        // Normalize if weights don't sum to 1.0
+        if (totalWeight > 0.001) {
+            skinned.mult(1.0 / totalWeight);
+        } else {
+            skinned = original.copy();
+        }
+
+        skinnedVerts.set(i, skinned);
+    }
+    updateMeshVertices();
+
+    if (startup) {
+        startup = false;
+    }
+}
   
   void printSummary() {
     println("\nModel Summary:");
@@ -1120,9 +1020,45 @@ void updateMeshVertices() {
       }
     }
   }
+  
+PShape renderSubmesh(int submeshIndex) {
+    if (submeshIndex < 0 || submeshIndex >= submeshes.size()) {
+        println("Error: Invalid submesh index");
+        return null;
+    }
+
+    Submesh submesh = submeshes.get(submeshIndex);
+    PShape part = createShape();
+    part.beginShape(TRIANGLES);
+    part.texture(texture);
+    part.textureMode(NORMAL);
+    part.noStroke();
+
+    for (int[] tri : submesh.triangles) {
+        for (int index : tri) {
+            if (index >= vertices.size()) {
+                println("Error: Invalid vertex index", index);
+                continue;
+            }
+            PVector v = vertices.get(index);
+            PVector uv = uvs.get(index);
+            part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+        }
+    }
+    part.endShape();
+    return part;
+}
 
   void draw() {
     updateAnimation();
     shape(mesh);
+    
+    /*
+    // Render only the second submesh (index 1)
+    PShape submeshShape = renderSubmesh(1); // Change index to test other submeshes
+    if (submeshShape != null) {
+        shape(submeshShape);
+    }
+    */
   }
 }
