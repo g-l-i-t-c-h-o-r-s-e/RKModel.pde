@@ -222,6 +222,7 @@ class RKModel {
   ArrayList<PShape> subShapeList = new ArrayList<PShape>();
   ArrayList<Submesh> submeshes = new ArrayList<>();
   ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
+  ArrayList<PShape> childShapes = new ArrayList<PShape>();
   PImage texture;
   float scale = 1;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
@@ -837,40 +838,67 @@ class RKModel {
 }
 
 
-void buildMesh() {
-    // Create the main mesh using the first submesh
-    Submesh mainSubmesh = submeshes.get(0);
-    mesh = createShape(GROUP); 
-    mainGeometry = createSubmeshShape(mainSubmesh);
-    mesh.addChild(mainGeometry); // First submesh becomes main geometry
-    
-    
-    // Add other submeshes as children
-    for (int i = 1; i < submeshes.size(); i++) {
-        Submesh childSubmesh = submeshes.get(i);
-        PShape childShape = createSubmeshShape(childSubmesh);
-        mesh.addChild(childShape); // Add as child to main mesh
-    }
-}
-
-PShape createSubmeshShape(Submesh submesh) {
-    PShape part = createShape();
-    part.beginShape(TRIANGLES);
-    part.texture(texture);
-    part.textureMode(NORMAL);
-    part.noStroke();
-    
-    for (int[] tri : submesh.triangles) {
-        for (int index : tri) {
-            PVector v = vertices.get(index);
-            PVector uv = uvs.get(index);
-            part.vertex(v.x, v.y, v.z, uv.x, uv.y);
-        }
-    }
-    part.endShape();
-    return part;
-}
+ void buildMesh() {
+      // Create the main mesh using the first submesh
+      Submesh mainSubmesh = submeshes.get(0);
+      mesh = createShape(GROUP); 
+      mainGeometry = createSubmeshShape(mainSubmesh);
+      mesh.addChild(mainGeometry); // First submesh becomes main geometry
   
+      // Store child submeshes in a list
+      childShapes.clear(); // Ensure the list is empty before adding new children
+  
+      for (int i = 1; i < submeshes.size(); i++) {
+          Submesh childSubmesh = submeshes.get(i);
+          PShape childShape = createSubmeshShape(childSubmesh);
+          mesh.addChild(childShape); // Add as child to main mesh
+          childShapes.add(childShape); // Store in list
+      }
+  
+      // Hide all child submeshes
+      for (int i = 0; i < childShapes.size(); i++) {
+          toggleChildVisibility(childShapes.get(i), false);
+      }
+  
+      // Show only the 2nd submesh by default
+      int whichSubmesh = 2;
+      if (childShapes.size() > whichSubmesh) {
+          toggleChildVisibility(childShapes.get(whichSubmesh), true);
+      } else {
+          println("Index Exceeded");
+      }
+  }
+
+  PShape createSubmeshShape(Submesh submesh) {
+      PShape part = createShape();
+      part.beginShape(TRIANGLES);
+      part.texture(texture);
+      part.textureMode(NORMAL);
+      part.noStroke();
+      
+      for (int[] tri : submesh.triangles) {
+          for (int index : tri) {
+              PVector v = vertices.get(index);
+              PVector uv = uvs.get(index);
+              part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+          }
+      }
+      part.endShape();
+      return part;
+  }
+
+  void toggleChildVisibility(PShape shape, boolean show) {
+      if (shape == null) return;
+  
+      if (show) {
+          shape.resetMatrix(); // Reset transformations
+          println("Showing submesh: " + shape);
+      } else {
+          shape.scale(0); // Scale down to make it "invisible"
+          println("Hiding submesh: " + shape);
+      }
+  }
+
 void updateMeshVertices() {
     if (mesh == null) {
         println("Error: Mesh is null, cannot update vertices.");
