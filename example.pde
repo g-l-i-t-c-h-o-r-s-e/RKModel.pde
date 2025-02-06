@@ -20,16 +20,19 @@ int gifOutputWidth = 600;
 int gifOutputHeight = 400;
 
 String modelFolder = "models/";
+String animFile = "pony_type01.anim";
+String modelFile = "pony_type01_muffins_lod1.rk";
 
 void setup() {
   size(1200, 800, P3D);
   
+  // Load texture and model
   tex = loadImage("pony_ponyville_162.png"); // texture image
-  model = new RKModel(modelFolder + "pony_type01_muffins_lod1.rk", tex);
-  model.loadAnimations(modelFolder + "pony_type01.anim");
-  //model.playAnimation("apple_idle_01_l", true);
+  model = new RKModel(modelFolder + modelFile, tex);
+  model.loadAnimations(modelFolder + animFile);
 
 
+  // Play an animation if available
   if (model.animationNames.size() > 0) {
     model.playAnimation(model.animationNames.get(currentAnimationIndex), loop);
   }
@@ -37,7 +40,7 @@ void setup() {
   // Set up PeasyCam
   cam = new PeasyCam(this, 130);
   
-  backgroundImg = loadImage("background.png");
+  backgroundImg = loadImage("lol.png");
   if (backgroundImg == null) {
     println("Error: background image not found");
   }
@@ -99,7 +102,7 @@ void draw() {
   }
   
   // (Optional) Print out the current frame and total frames for debugging.
-  // println("Frame: " + (model.currentAnim.currentFrame - model.currentAnim.clip.startFrame) + " of " + model.frameDur);
+  println("Frame: " + (model.currentAnim.currentFrame - model.currentAnim.clip.startFrame) + " of " + model.frameDur);
 }
 
 void keyPressed() {
