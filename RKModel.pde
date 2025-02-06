@@ -300,11 +300,11 @@ AnimVisibilityData parseAnimVisibilityXML(String xmlPath, RKModel model) {
                 println("Animation missing Name attribute");
                 continue;
             }
-            println("Processing animation: " + animName);
+            ////println("Processing animation: " + animName);
             
             ArrayList<FrameVisibility> frames = new ArrayList<>();
             XML[] frameElements = anim.getChildren("Frame");
-            println("- Frames found: " + frameElements.length);
+            ////println("- Frames found: " + frameElements.length);
             
             for (XML frameEl : frameElements) {
                 int index = frameEl.getInt("Index");
@@ -324,7 +324,7 @@ AnimVisibilityData parseAnimVisibilityXML(String xmlPath, RKModel model) {
                     try {
                         EyeMode mode = EyeMode.valueOf(open);
                         fv.eyeState = new EyeState(mode, blink);
-                        println("Frame " + index + ": EyeSet " + mode + ", Blink: " + blink);
+                        ////println("Frame " + index + ": EyeSet " + mode + ", Blink: " + blink);
                     } catch (Exception e) {
                         println("Invalid EyeMode: " + open);
                     }
@@ -338,14 +338,14 @@ AnimVisibilityData parseAnimVisibilityXML(String xmlPath, RKModel model) {
                     boolean visible = show.equals("1");
                     if (xmlID != null) {
                         fv.submeshVisibility.put(xmlID, visible);
-                        println("Frame " + index + ": SubObject " + xmlID + " visible=" + visible);
+                        ////println("Frame " + index + ": SubObject " + xmlID + " visible=" + visible);
                     }
                 }
                 
                 frames.add(fv);
             }
             data.animations.put(animName, frames);
-            println("Added animation '" + animName + "' with " + frames.size() + " frames");
+            ////println("Added animation '" + animName + "' with " + frames.size() + " frames");
         }
     }
 
@@ -436,7 +436,7 @@ class RKModel {
     computeInverseBindMatrices();
     buildMesh();
     applySkinning();
-    loadVisibilityXML("models/pony_" + header.name.substring(0, header.name.indexOf("_")) + ".xml");
+    loadVisibilityXML("models/pony_" + header.name.split("_")[0] + ".xml");
     printSummary();
   }
 
