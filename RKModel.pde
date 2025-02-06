@@ -436,7 +436,7 @@ class RKModel {
     computeInverseBindMatrices();
     buildMesh();
     applySkinning();
-    loadVisibilityXML("models/pony_" + header.name + ".xml");
+    loadVisibilityXML("models/pony_" + header.name.substring(0, header.name.indexOf("_")) + ".xml");
     printSummary();
   }
 
@@ -1233,7 +1233,7 @@ class RKModel {
                   }
   
                   // Check for CLOSED mode without blinking first
-                  if (fv.eyeState.mode.toString().toLowerCase().equals("closed") && !fv.eyeState.blink) {
+                  if (fv.eyeState.mode.toString().toLowerCase().contains("closed") && !fv.eyeState.blink) {
                       currentEyeMode = "closed";
                       isBlinking = false;
                       String newEyeID = "eyes_shut";
@@ -1248,6 +1248,23 @@ class RKModel {
                           }
                       }
                   }
+                  // Check for CLOSED mode without blinking first
+                  else if (fv.eyeState.mode.toString().toLowerCase().contains("none") && !fv.eyeState.blink) {
+                      currentEyeMode = "closed";
+                      isBlinking = false;
+                      String newEyeID = "eyes_open";
+                      
+                      // Find and enable eyes_closed submesh
+                      for (Submesh sm : submeshes) {
+                          if (sm.name.toLowerCase().contains(newEyeID)) {
+                              println("Showing submesh: " + sm.name);
+                              toggleSubmeshVisibility(sm, true);
+                              currentEyeSubmesh = sm;
+                              break;
+                          }
+                      }
+                  }
+                  
                   // Then check for blinking state (applies to all other eye modes)
                   else if (fv.eyeState.blink) {
                       // Start blinking: save current eye mode and trigger blink
@@ -1332,10 +1349,6 @@ class RKModel {
           }
       }
   }
-
-
-
-
 
 
   void printSummary() {
