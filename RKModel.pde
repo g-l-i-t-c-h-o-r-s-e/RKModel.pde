@@ -408,6 +408,7 @@ class RKModel {
   int blinkCounter = 0;
   int blinkDuration = 3; // Number of frames to keep eyes shut
   String currentEyeMode = "open"; // Track current eye mode outside of blinking
+  String animFile;
 
   
   
@@ -427,7 +428,7 @@ class RKModel {
     header = new RKHeader(data);
     
     if (!header.magic.equals("RKFORMAT")) return;
-    
+        
     loadSections(data);
     readAttributes(data);
     readSubmeshInfo(data);
@@ -437,7 +438,7 @@ class RKModel {
     computeInverseBindMatrices();
     buildMesh();
     applySkinning();
-    loadVisibilityXML("models/pony_type01.xml");
+    loadVisibilityXML(modelFolder + anim_file.replace(".anim", ".xml"));
     printSummary();
   }
 
@@ -630,7 +631,9 @@ class RKModel {
 
     // Load animation clips with proper CSV parsing
     String csvFile = animFile.replace(".anim", ".csv");
-    String animXML = animFile.replace(".anim", ".csv").split("_")[0];
+    println(csvFile);
+    animXML = animFile.replace(".anim", ".xml");
+    println(animXML);
     String[] lines = loadStrings(csvFile);
     if (lines != null) {
       for (String line : lines) {
@@ -688,6 +691,8 @@ class RKModel {
               currentAnim.clip.fps = 15;
               currentAnim.playing = true;
               
+              frameDur = clip.endFrame - clip.startFrame;
+              
               println("Playing clip:", name, "for", clip.endFrame - clip.startFrame, "frames");
               return;
           }
@@ -700,9 +705,8 @@ class RKModel {
     if (currentAnim == null || !currentAnim.playing) return;
 
     currentAnim.update();
-    //int frameDur = currentAnim.currentFrame - currentAnim.clip.startFrame;
     if (currentAnim != null && hasAnimations) {
-      updateVisibilityForFrame(currentAnim.clip.name, currentAnim.currentFrame - currentAnim.clip.startFrame);
+      updateVisibilityForFrame(currentAnim.clip.name, (currentAnim.currentFrame - currentAnim.clip.startFrame));
     }
     applyBonePoses();
     applySkinning();
@@ -1189,157 +1193,157 @@ class RKModel {
     }
   }
 
-void updateVisibilityForFrame(String animName, int frameDur) {
-    if (visibilityData == null) {
-        println("Visibility data is null");
-        return;
-    }
-
-    ArrayList<FrameVisibility> frames = visibilityData.animations.get(animName);
-    if (frames == null) {
-        println("No frames found for animation: '" + animName + "'");
-        return;
-    }
-
-    // Process current frame's visibility data
-    for (FrameVisibility fv : frames) {
-        if (fv.frameIndex == frameDur) {
-            // If we are about to process an eye state and we still have the initial eye submesh active,
-            // then disable it.
-            if (fv.eyeState != null && initialEyeSubmesh != null) {
-                println("Disabling initial eye submesh: " + initialEyeSubmesh.name);
-                toggleSubmeshVisibility(initialEyeSubmesh, false);
-                // Clear it out so we dont try to disable it again.
-                initialEyeSubmesh = null;
-            }
-
-            // Handle eye states first
-            if (fv.eyeState != null) {
-                println("Handling eye state for frame: " + frameDur);
-                println("Eye mode: " + fv.eyeState.mode + ", Blink: " + fv.eyeState.blink);
-
-                // Disable previous eye submesh if one was active
-                if (currentEyeSubmesh != null) {
-                    println("Hiding previously active eye submesh: " + currentEyeSubmesh.name);
-                    toggleSubmeshVisibility(currentEyeSubmesh, false);
-                }
-
-                // Check for CLOSED mode without blinking first
-                if (fv.eyeState.mode.toString().toLowerCase().contains("closed") && !fv.eyeState.blink) {
-                    currentEyeMode = "closed";
-                    isBlinking = false;
-                    String newEyeID = "eyes_shut";
-
-                    // Find and enable eyes_closed submesh
-                    for (Submesh sm : submeshes) {
-                        if (sm.name.toLowerCase().contains(newEyeID)) {
-                            println("Showing submesh: " + sm.name);
-                            toggleSubmeshVisibility(sm, true);
-                            currentEyeSubmesh = sm;
-                            break;
-                        }
-                    }
-                }
-                // Check for "none" mode (interpreted here as closed)
-                else if (fv.eyeState.mode.toString().toLowerCase().contains("none") && !fv.eyeState.blink) {
-                    currentEyeMode = "closed";
-                    isBlinking = false;
-                    String newEyeID = "eyes_open";
-
-                    // Find and enable eyes_open submesh
-                    for (Submesh sm : submeshes) {
-                        if (sm.name.toLowerCase().contains(newEyeID)) {
-                            println("Showing submesh: " + sm.name);
-                            toggleSubmeshVisibility(sm, true);
-                            currentEyeSubmesh = sm;
-                            break;
-                        }
-                    }
-                }
-                // Then check for blinking state (applies to all other eye modes)
-                else if (fv.eyeState.blink) {
-                    // Start blinking: save current eye mode and trigger blink
-                    currentEyeMode = fv.eyeState.mode.toString().toLowerCase();
-                    isBlinking = true;
-                    blinkCounter = 0; // Reset counter on new blink
-                    String newEyeID = "eyes_shut";
-
-                    // Find and enable eyes_shut submesh
-                    for (Submesh sm : submeshes) {
-                        if (sm.name.toLowerCase().contains(newEyeID)) {
-                            println("Showing submesh: " + sm.name);
-                            toggleSubmeshVisibility(sm, true);
-                            currentEyeSubmesh = sm;
-                            break;
-                        }
-                    }
-                } 
-                // Otherwise, use the non-blinking version of the specified eye mode
-                else {
-                    currentEyeMode = fv.eyeState.mode.toString().toLowerCase();
-                    isBlinking = false;
-                    String newEyeID = "eyes_" + currentEyeMode;
-
-                    // Find and enable new eye submesh
-                    for (Submesh sm : submeshes) {
-                        if (sm.name.toLowerCase().contains(newEyeID)) {
-                            println("Showing submesh: " + sm.name);
-                            toggleSubmeshVisibility(sm, true);
-                            currentEyeSubmesh = sm;
-                            break;
-                        }
-                    }
-                }
-            } else {
-                println("No eye state for frame: " + frameDur);
-            }
-
-            // Handle regular submesh visibility (non-eye)
-            for (Map.Entry<String, Boolean> entry : fv.submeshVisibility.entrySet()) {
-                String xmlID = entry.getKey();
-                boolean visible = entry.getValue();
-                println("Processing regular submesh: " + xmlID + ", Visible: " + visible);
-
-                for (Submesh sm : submeshes) {
-                    if (sm.name.toLowerCase().contains(xmlID.toLowerCase())) {
-                        toggleSubmeshVisibility(sm, visible);
-                        println("Toggling visibility of submesh " + sm.name + ": " + visible);
-                    }
-                }
-            }
-            break; // Found our matching frame so break out of the loop.
-        }
-    }
-
-    // Handle blinking state progression regardless of current frame's eye state
-    if (isBlinking) {
-        blinkCounter++;
-        println("Blinking, counter: " + blinkCounter);
-        if (blinkCounter >= blinkDuration) {
-            println("Reverting to eye mode: " + currentEyeMode);
-            String revertEyeID = "eyes_" + currentEyeMode;
-
-            // Disable current eye submesh (eyes_shut)
-            if (currentEyeSubmesh != null) {
-                toggleSubmeshVisibility(currentEyeSubmesh, false);
-            }
-
-            // Find and enable the original eye submesh
-            for (Submesh sm : submeshes) {
-                if (sm.name.toLowerCase().contains(revertEyeID)) {
-                    println("Showing reverted submesh: " + sm.name);
-                    toggleSubmeshVisibility(sm, true);
-                    currentEyeSubmesh = sm;
-                    break;
-                }
-            }
-
-            // Reset blinking state
-            isBlinking = false;
-            blinkCounter = 0;
-        }
-    }
-}
+  void updateVisibilityForFrame(String animName, int frameDur) {
+      if (visibilityData == null) {
+          println("Visibility data is null");
+          return;
+      }
+  
+      ArrayList<FrameVisibility> frames = visibilityData.animations.get(animName);
+      if (frames == null) {
+          println("No frames found for animation: '" + animName + "'");
+          return;
+      }
+  
+      // Process current frame's visibility data
+      for (FrameVisibility fv : frames) {
+          if (fv.frameIndex == frameDur) {
+              // If we are about to process an eye state and we still have the initial eye submesh active,
+              // then disable it.
+              if (fv.eyeState != null && initialEyeSubmesh != null) {
+                  println("Disabling initial eye submesh: " + initialEyeSubmesh.name);
+                  toggleSubmeshVisibility(initialEyeSubmesh, false);
+                  // Clear it out so we dont try to disable it again.
+                  initialEyeSubmesh = null;
+              }
+  
+              // Handle eye states first
+              if (fv.eyeState != null) {
+                  println("Handling eye state for frame: " + frameDur);
+                  println("Eye mode: " + fv.eyeState.mode + ", Blink: " + fv.eyeState.blink);
+  
+                  // Disable previous eye submesh if one was active
+                  if (currentEyeSubmesh != null) {
+                      println("Hiding previously active eye submesh: " + currentEyeSubmesh.name);
+                      toggleSubmeshVisibility(currentEyeSubmesh, false);
+                  }
+  
+                  // Check for CLOSED mode without blinking first
+                  if (fv.eyeState.mode.toString().toLowerCase().contains("closed") && !fv.eyeState.blink) {
+                      currentEyeMode = "closed";
+                      isBlinking = false;
+                      String newEyeID = "eyes_shut";
+  
+                      // Find and enable eyes_closed submesh
+                      for (Submesh sm : submeshes) {
+                          if (sm.name.toLowerCase().contains(newEyeID)) {
+                              println("Showing submesh: " + sm.name);
+                              toggleSubmeshVisibility(sm, true);
+                              currentEyeSubmesh = sm;
+                              break;
+                          }
+                      }
+                  }
+                  // Check for "none" mode (interpreted here as closed)
+                  else if (fv.eyeState.mode.toString().toLowerCase().contains("none") && !fv.eyeState.blink) {
+                      currentEyeMode = "closed";
+                      isBlinking = false;
+                      String newEyeID = "eyes_open";
+  
+                      // Find and enable eyes_open submesh
+                      for (Submesh sm : submeshes) {
+                          if (sm.name.toLowerCase().contains(newEyeID)) {
+                              println("Showing submesh: " + sm.name);
+                              toggleSubmeshVisibility(sm, true);
+                              currentEyeSubmesh = sm;
+                              break;
+                          }
+                      }
+                  }
+                  // Then check for blinking state (applies to all other eye modes)
+                  else if (fv.eyeState.blink) {
+                      // Start blinking: save current eye mode and trigger blink
+                      currentEyeMode = fv.eyeState.mode.toString().toLowerCase();
+                      isBlinking = true;
+                      blinkCounter = 0; // Reset counter on new blink
+                      String newEyeID = "eyes_shut";
+  
+                      // Find and enable eyes_shut submesh
+                      for (Submesh sm : submeshes) {
+                          if (sm.name.toLowerCase().contains(newEyeID)) {
+                              println("Showing submesh: " + sm.name);
+                              toggleSubmeshVisibility(sm, true);
+                              currentEyeSubmesh = sm;
+                              break;
+                          }
+                      }
+                  } 
+                  // Otherwise, use the non-blinking version of the specified eye mode
+                  else {
+                      currentEyeMode = fv.eyeState.mode.toString().toLowerCase();
+                      isBlinking = false;
+                      String newEyeID = "eyes_" + currentEyeMode;
+  
+                      // Find and enable new eye submesh
+                      for (Submesh sm : submeshes) {
+                          if (sm.name.toLowerCase().contains(newEyeID)) {
+                              println("Showing submesh: " + sm.name);
+                              toggleSubmeshVisibility(sm, true);
+                              currentEyeSubmesh = sm;
+                              break;
+                          }
+                      }
+                  }
+              } else {
+                  println("No eye state for frame: " + frameDur);
+              }
+  
+              // Handle regular submesh visibility (non-eye)
+              for (Map.Entry<String, Boolean> entry : fv.submeshVisibility.entrySet()) {
+                  String xmlID = entry.getKey();
+                  boolean visible = entry.getValue();
+                  println("Processing regular submesh: " + xmlID + ", Visible: " + visible);
+  
+                  for (Submesh sm : submeshes) {
+                      if (sm.name.toLowerCase().contains(xmlID.toLowerCase())) {
+                          toggleSubmeshVisibility(sm, visible);
+                          println("Toggling visibility of submesh " + sm.name + ": " + visible);
+                      }
+                  }
+              }
+              break; // Found our matching frame so break out of the loop.
+          }
+      }
+  
+      // Handle blinking state progression regardless of current frame's eye state
+      if (isBlinking) {
+          blinkCounter++;
+          println("Blinking, counter: " + blinkCounter);
+          if (blinkCounter >= blinkDuration) {
+              println("Reverting to eye mode: " + currentEyeMode);
+              String revertEyeID = "eyes_" + currentEyeMode;
+  
+              // Disable current eye submesh (eyes_shut)
+              if (currentEyeSubmesh != null) {
+                  toggleSubmeshVisibility(currentEyeSubmesh, false);
+              }
+  
+              // Find and enable the original eye submesh
+              for (Submesh sm : submeshes) {
+                  if (sm.name.toLowerCase().contains(revertEyeID)) {
+                      println("Showing reverted submesh: " + sm.name);
+                      toggleSubmeshVisibility(sm, true);
+                      currentEyeSubmesh = sm;
+                      break;
+                  }
+              }
+  
+              // Reset blinking state
+              isBlinking = false;
+              blinkCounter = 0;
+          }
+      }
+  }
 
 void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
     int index = submeshes.indexOf(sm);
