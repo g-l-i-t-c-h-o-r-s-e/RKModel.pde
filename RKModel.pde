@@ -4,6 +4,9 @@
  * https://gist.github.com/g-l-i-t-c-h-o-r-s-e/5590148123825db0205a1ff0d0428f0e
  ********************************************************************************/
 
+import processing.data.XML;
+import java.util.Map;
+
 int readInt4(byte[] b, int o) {
   return (b[o] & 0xFF) |
         ((b[o+1] & 0xFF) << 8) |
@@ -180,22 +183,191 @@ class VertexWeight {
 }
 
 class Submesh {
-    String name;
-    int trianglesCount; // Number of triangles
-    ArrayList<int[]> triangles; // Actual triangle data
-    int offset;
-    int material;
-    int unknown;
+  String name;
+  String xmlID;          // Added for XML mapping
+  boolean defaultVisible;// Added for visibility control
+  int trianglesCount;
+  ArrayList<int[]> triangles;
+  int offset;
+  int material;
+  int unknown;
+  boolean currentVisible;
 
-    Submesh(String name, int trianglesCount, int offset, int material, int unknown) {
-        this.name = name;
-        this.trianglesCount = trianglesCount; // Store the number of triangles
-        this.offset = offset;
-        this.material = material;
-        this.unknown = unknown;
-        this.triangles = new ArrayList<>(); // Initialize the list for triangle data
+  Submesh(String name, int trianglesCount, int offset, int material, int unknown) {
+    this.name = name;
+    this.trianglesCount = trianglesCount;
+    this.offset = offset;
+    this.material = material;
+    this.unknown = unknown;
+    this.triangles = new ArrayList<>();
+    this.currentVisible = true;
+  }
+}
+
+
+class AnimVisibilityData {
+  HashMap<String, ArrayList<Submesh>> objectDefinitions;  // Maps object names to their submeshes
+  HashMap<String, ArrayList<FrameVisibility>> animations; // Maps animation names to frame data
+
+  AnimVisibilityData() {
+    objectDefinitions = new HashMap<>();
+    animations = new HashMap<>();
+  }
+}
+
+class FrameVisibility {
+  int frameIndex;
+  HashMap<String, Boolean> submeshVisibility = new HashMap<>();
+  EyeState eyeState;
+
+  FrameVisibility(int index) {
+    frameIndex = index;
+  }
+}
+
+class EyeState {
+  boolean blink;
+  EyeMode mode;
+  
+  EyeState(EyeMode mode, boolean blink) {
+    this.mode = mode;
+    this.blink = blink;
+  }
+}
+
+enum EyeMode {
+  NONE,
+  OPEN,
+  CLOSED,
+  HAPPY,
+  FROWN
+}
+
+AnimVisibilityData parseAnimVisibilityXML(String xmlPath, RKModel model) {
+    AnimVisibilityData data = new AnimVisibilityData();
+
+    String[] lines = loadStrings(xmlPath);
+    String xmlContent = join(lines, "\n");
+    xmlContent = xmlContent.replaceFirst("^<\\?xml[^>]+\\?>", "").trim();
+    xmlContent = "<root>" + xmlContent + "</root>";
+
+    XML xml = parseXML(xmlContent);
+    if (xml == null) {
+        println("Failed to parse XML");
+        return data;
+    }
+
+    XML meshListElement = xml.getChild("MeshList");
+    if (meshListElement != null) {
+        XML[] meshObjects = meshListElement.getChildren();
+        for (XML obj : meshObjects) {
+            String objectName = obj.getName();
+            ArrayList<Submesh> submeshes = new ArrayList<>();
+
+            XML[] subObjects = obj.getChildren("SubObject");
+            for (XML subObj : subObjects) {
+                String xmlID = subObj.getString("ID");
+                String modelName = subObj.getString("Name");
+                boolean defaultVisible = subObj.getString("DefaultVisible").equals("1");
+
+                if (xmlID == null || xmlID.isEmpty()) {
+                    xmlID = "submesh_" + modelName.toLowerCase().replace(" ", "_");
+                }
+                
+                //this line is incorrect, the submeshes in our model will not match a modelName in the xml.
+                for (Submesh sm : model.submeshes) {
+                    if (sm.name.equals(modelName)) {
+                        sm.xmlID = xmlID;
+                        sm.defaultVisible = defaultVisible;
+                        submeshes.add(sm);
+                        println("Matched submesh:", sm.name, "with XML ID:", xmlID);
+                        break;
+                    }
+                }
+            }
+            data.objectDefinitions.put(objectName, submeshes);
+        }
+    }
+
+    XML animListElement = xml.getChild("AnimationList");
+    if (animListElement != null) {
+        XML[] anims = animListElement.getChildren("Animation");
+        println("Found " + anims.length + " animations in XML");
+        
+        for (XML anim : anims) {
+            String animName = anim.getString("Name");
+            if (animName == null) {
+                println("Animation missing Name attribute");
+                continue;
+            }
+            println("Processing animation: " + animName);
+            
+            ArrayList<FrameVisibility> frames = new ArrayList<>();
+            XML[] frameElements = anim.getChildren("Frame");
+            println("- Frames found: " + frameElements.length);
+            
+            for (XML frameEl : frameElements) {
+                int index = frameEl.getInt("Index");
+                if (frameEl.hasAttribute("Index") == false) {
+                    println("Frame missing Index attribute");
+                    continue;
+                }
+                FrameVisibility fv = new FrameVisibility(index);
+                
+                // Process EyeSet
+                XML[] eyeSets = frameEl.getChildren("EyeSet");
+                if (eyeSets.length > 0) {
+                    XML eyes = eyeSets[0];
+                    String open = eyes.getString("Open", "NONE").toUpperCase();
+                    boolean blink = eyes.getString("EnableBlink", "0").equals("1");
+                    
+                    try {
+                        EyeMode mode = EyeMode.valueOf(open);
+                        fv.eyeState = new EyeState(mode, blink);
+                        println("Frame " + index + ": EyeSet " + mode + ", Blink: " + blink);
+                    } catch (Exception e) {
+                        println("Invalid EyeMode: " + open);
+                    }
+                }
+                
+                // Process SubObjects
+                XML[] subObjs = frameEl.getChildren("SubObject");
+                for (XML subObj : subObjs) {
+                    String xmlID = subObj.getString("ID");
+                    String show = subObj.getString("Show", "0");
+                    boolean visible = show.equals("1");
+                    if (xmlID != null) {
+                        fv.submeshVisibility.put(xmlID, visible);
+                        println("Frame " + index + ": SubObject " + xmlID + " visible=" + visible);
+                    }
+                }
+                
+                frames.add(fv);
+            }
+            data.animations.put(animName, frames);
+            println("Added animation '" + animName + "' with " + frames.size() + " frames");
+        }
+    }
+
+    return data;
+}
+
+String getEyeSubmeshName(EyeMode mode) {
+    switch (mode) {
+        case CLOSED:
+            return "eyes_shut";
+        case OPEN:
+            return "eyes_open";
+        case HAPPY:
+            return "eyes_happy";
+        case FROWN:
+            return "eyes_frown";
+        default:
+            return "";
     }
 }
+
+
 
 class RKModel {
   RKHeader header;
@@ -223,10 +395,15 @@ class RKModel {
   ArrayList<Submesh> submeshes = new ArrayList<>();
   ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
   ArrayList<PShape> childShapes = new ArrayList<PShape>();
+  AnimVisibilityData visibilityData;
   PImage texture;
   float scale = 1;
+  int frameDur;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
   boolean startup = true;
+  String animXML;
+  boolean hideSubmesh = false;
+  
   
   String readString(byte[] data, int o, int maxLen) {
     String s = "";
@@ -253,6 +430,7 @@ class RKModel {
     computeInverseBindMatrices();
     buildMesh();
     applySkinning();
+    loadVisibilityXML("models/pony_" + header.name + ".xml");
     printSummary();
   }
 
@@ -314,7 +492,6 @@ class RKModel {
           int triangleOffset = readInt4(data, offset + 4);
           int materialIndex = readInt4(data, offset + 8);
           int unknown = readInt4(data, offset + 12);
-          println(triangles);
   
           Submesh submesh = new Submesh(
               submeshNames.get(i),
@@ -323,7 +500,7 @@ class RKModel {
               materialIndex,
               unknown
           );
-          println(submesh.offset);
+          println("Submesh [" + i + "] Triangle offset: "+ submesh.offset);
           submeshes.add(submesh);
           offset += 16;
       }
@@ -399,8 +576,7 @@ class RKModel {
               parentBone.children.add(bone);
           }
       }
-  
-      // Print hierarchy for debugging
+        // Print hierarchy for debugging
       println("\nBone Hierarchy:");
       for (Bone bone : bones) {
           if (bone.parent == -1) { // Only print root bones
@@ -497,24 +673,33 @@ class RKModel {
   }
   
   void playAnimation(String name, boolean loop) {
-    for (AnimationClip clip : animations) {
-      if (clip.name.equals(name)) {
-        currentAnim = new AnimationState(clip);
-        currentAnim.clip.loop = loop;
-        currentAnim.clip.fps = 15;
-        currentAnim.playing = true;
-        println("Playing clip:", name, "for", clip.endFrame - clip.startFrame, "frames");
-        return;
+      for (AnimationClip clip : animations) {
+          if (clip.name.equals(name)) {
+              currentAnim = new AnimationState(clip);
+              currentAnim.clip.loop = loop;
+              currentAnim.clip.fps = 15;
+              currentAnim.playing = true;
+              
+              println("Playing clip:", name, "for", clip.endFrame - clip.startFrame, "frames");
+              return;
+          }
       }
-    }
-    println("Animation not found:", name);
+      println("Animation not found:", name);
   }
+
 
   void updateAnimation() {
     if (currentAnim == null || !currentAnim.playing) return;
+
     currentAnim.update();
+    //int frameDur = currentAnim.currentFrame - currentAnim.clip.startFrame;
+    if (currentAnim != null && hasAnimations) {
+      updateVisibilityForFrame(currentAnim.clip.name, currentAnim.currentFrame - currentAnim.clip.startFrame);
+    }
     applyBonePoses();
     applySkinning();
+
+
   }
 
   void applyBonePoses() {
@@ -706,6 +891,7 @@ class RKModel {
               PVector uv = new PVector(0, 0);
               // Handle UVs based on stride
               if (stride == 16 || stride == 28) {
+                  // Isnt this calculated in readAttributes?
                   //int uvOffset = (stride == 28) ? 20 : 12; // Adjust for 28-byte stride
                   int u = readShort2(data, off + uvOffset);
                   int v = readShort2(data, off + uvOffset + 2);
@@ -717,7 +903,8 @@ class RKModel {
                   uv.x = u_float;
                   uv.y = v_float;
               }
-  
+              
+              //wtf lol
               uv.y = (uv.y + 1.0f) / 2.0f;
               uv.y *= this.uvScale;
   
@@ -835,38 +1022,39 @@ class RKModel {
         }
     }
     println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
-}
+  }
 
 
  void buildMesh() {
-      // Create the main mesh using the first submesh
-      Submesh mainSubmesh = submeshes.get(0);
-      mesh = createShape(GROUP); 
-      mainGeometry = createSubmeshShape(mainSubmesh);
-      mesh.addChild(mainGeometry); // First submesh becomes main geometry
-  
-      // Store child submeshes in a list
-      childShapes.clear(); // Ensure the list is empty before adding new children
-  
-      for (int i = 1; i < submeshes.size(); i++) {
-          Submesh childSubmesh = submeshes.get(i);
-          PShape childShape = createSubmeshShape(childSubmesh);
-          mesh.addChild(childShape); // Add as child to main mesh
-          childShapes.add(childShape); // Store in list
-      }
-  
-      // Hide all child submeshes
-      for (int i = 0; i < childShapes.size(); i++) {
-          toggleChildVisibility(childShapes.get(i), false);
-      }
-  
-      // Show only the 2nd submesh by default
-      int whichSubmesh = 2;
-      if (childShapes.size() > whichSubmesh) {
-          toggleChildVisibility(childShapes.get(whichSubmesh), true);
-      } else {
-          println("Index Exceeded");
-      }
+    // Create the main mesh using the first submesh
+    Submesh mainSubmesh = submeshes.get(0);
+    mesh = createShape(GROUP); 
+    mainGeometry = createSubmeshShape(mainSubmesh);
+    mesh.addChild(mainGeometry); // First submesh becomes main geometry
+
+    // Store child submeshes in a list
+    childShapes.clear(); // Ensure the list is empty before adding new children
+
+    for (int i = 1; i < submeshes.size(); i++) {
+        Submesh childSubmesh = submeshes.get(i);
+        PShape childShape = createSubmeshShape(childSubmesh);
+        mesh.addChild(childShape); // Add as child to main mesh
+        childShapes.add(childShape); // Store in list
+    }
+
+
+    // Hide all child submeshes
+    for (int i = 0; i < childShapes.size(); i++) {
+        toggleChildVisibility(childShapes.get(i), false);
+    }
+
+    // Show only the 2nd submesh by default
+    int whichSubmesh = 2;
+    if (childShapes.size() > whichSubmesh) {
+        toggleChildVisibility(childShapes.get(whichSubmesh), true);
+    } else {
+        println("Index Exceeded");
+    }
   }
 
   PShape createSubmeshShape(Submesh submesh) {
@@ -891,39 +1079,47 @@ class RKModel {
       if (shape == null) return;
   
       if (show) {
-          shape.resetMatrix(); // Reset transformations
-          println("Showing submesh: " + shape);
+          shape.resetMatrix();
       } else {
-          shape.scale(0); // Scale down to make it "invisible"
-          println("Hiding submesh: " + shape);
+          shape.scale(0);
       }
   }
 
-void updateMeshVertices() {
-    if (mesh == null) {
-        println("Error: Mesh is null, cannot update vertices.");
-        return;
-    }
+  void updateMeshVertices() {
+      if (mesh == null) {
+          println("Error: Mesh is null, cannot update vertices.");
+          return;
+      }
+  
+      int submeshIndex = 0;
+      for (PShape part : mesh.getChildren()) {
+          int vertexIndex = 0;
+          Submesh submesh = submeshes.get(submeshIndex);
+  
+          for (int[] tri : submesh.triangles) {
+              for (int j = 0; j < 3; j++) {
+                  int originalIndex = tri[j];
+                  if (originalIndex < skinnedVerts.size()) {
+                      PVector v = skinnedVerts.get(originalIndex);
+                      part.setVertex(vertexIndex, v.x, v.y, v.z); 
+                  }
+                  vertexIndex++;
+              }
+          }
+          submeshIndex++;
+      }
+  }
 
-    int submeshIndex = 0;
-    for (PShape part : mesh.getChildren()) {
-        int vertexIndex = 0;
-        Submesh submesh = submeshes.get(submeshIndex);
-
-        for (int[] tri : submesh.triangles) {
-            for (int j = 0; j < 3; j++) {
-                int originalIndex = tri[j];
-                if (originalIndex < skinnedVerts.size()) {
-                    PVector v = skinnedVerts.get(originalIndex);
-                    part.setVertex(vertexIndex, v.x, v.y, v.z); 
-                }
-                vertexIndex++;
-            }
-        }
-        submeshIndex++;
-    }
-}
-//*/
+  void toggleSubmeshVisibility(Submesh sm, boolean visible) {
+      int index = submeshes.indexOf(sm);
+      if (index <= 0) return; // Ignore main submesh (index 0) or invalid
+      
+      int childIndex = index - 1; // Adjust for childShapes indexing
+      if (childIndex >= 0 && childIndex < childShapes.size()) {
+          PShape child = childShapes.get(childIndex);
+          toggleChildVisibility(child, visible); 
+      }
+  }
 
   void applySkinning() {
   // Initialize skinnedVerts with original vertex positions
@@ -985,26 +1181,107 @@ void updateMeshVertices() {
         startup = false;
     }
 }
+
   
+  void loadVisibilityXML(String xmlPath) {
+    visibilityData = parseAnimVisibilityXML(xmlPath, this);
+    println("XML PATH:");
+    println(xmlPath);
+    
+    // Initialize submesh visibility
+    for (ArrayList<Submesh> submeshes : visibilityData.objectDefinitions.values()) {
+      for (Submesh sm : submeshes) {
+        sm.currentVisible = sm.defaultVisible;
+        toggleSubmeshVisibility(sm, sm.defaultVisible);
+      }
+    }
+  }
+
+  void updateVisibilityForFrame(String animName, int frameDur) {
+    if (visibilityData == null) {
+      println("Visibility data is null");
+      return;
+    }
+    
+    
+    //println("Looking up animation '" + animName + "' for frame " + frameDur);
+    ArrayList<FrameVisibility> frames = visibilityData.animations.get(animName);
+    if (frames == null) {
+      println("No frames found for animation: '" + animName + "'");
+      return;
+    }
+    
+    //println("Loaded animation names: " + visibilityData.animations.keySet());
+    //println(frames);
+  
+    for (FrameVisibility fv : frames) {
+      if (fv.frameIndex == frameDur) {
+        // Handle eye states first
+        if (fv.eyeState != null) {
+          println("Handling eye state for frame:", frameDur);
+          println("Eye mode: " + fv.eyeState.mode + ", Blink: " + fv.eyeState.blink);
+          hideSubmesh = false;
+  
+          // Hide all eye submeshes initially
+          for (Submesh sm : submeshes) {
+            if (sm.name.startsWith("eyes_")) {
+              println("Hiding eye submesh: " + sm.name);
+              //toggleSubmeshVisibility(sm, false); // COMMENTED OUT FOR NOOOOOOOOOOOOOOOOW
+              //hideSubmesh = true;
+            }
+          }
+  
+          // If blinking is enabled, show the "eyes_closed" submesh and hide other eye states
+          if (fv.eyeState.blink) {
+            println("Blinking is enabled, showing eyes_closed");
+            String blinkEyeID = "eyes_shut"; // Show closed eyes when blinking
+            for (Submesh sm : submeshes) {
+              if (sm.name.matches(".*"+blinkEyeID+".*")) {
+                println("Showing submesh for eyes_closed: " + sm.name);
+                toggleSubmeshVisibility(sm, true); // Show "eyes_closed"
+              }
+            }
+          } else {
+            // If no blink, show the appropriate open eye state (based on mode)
+            String primaryEyeID = "eyes_" + fv.eyeState.mode.toString().toLowerCase();
+            println("No blink, showing open eye state: " + primaryEyeID);
+            for (Submesh sm : submeshes) {
+              if (sm.name.matches(".*"+primaryEyeID+".*")) {
+                println("Showing submesh for open eye state: " + sm.name);
+                toggleSubmeshVisibility(sm, true); // Show primary eye state (e.g., "eyes_open")
+              }
+            }
+          }
+        } else {
+          println("No eye state for frame:", frameDur);
+        }
+  
+        // Handle regular submesh visibility (not for eyes)
+        for (Map.Entry<String, Boolean> entry : fv.submeshVisibility.entrySet()) {
+          String xmlID = entry.getKey();
+          boolean visible = entry.getValue();
+          println("Processing regular submesh: " + xmlID + ", Visible: " + visible);
+  
+          for (Submesh sm : submeshes) {
+            if (sm.name.matches(".*"+xmlID+".*")) {
+              toggleSubmeshVisibility(sm, visible);
+              println("Toggling visibility of submesh " + sm.name + ": " + visible);
+            }
+          }
+        }
+        break;
+      }
+    }
+  }
+
+
   void printSummary() {
     println("\nModel Summary:");
     println("Vertices: " + vertices.size());
     println("Triangles: " + triangles.size());
     println("Bones: " + bones.size());
     println("Materials: " + materials.size());
-
-    // Print bone positions from global transforms
-    println("Bone Positions:");
-    for (Bone bone : bones) {
-      PVector pos = new PVector();
-      bone.matrix.mult(pos, pos);
-      println(
-        "Bone: " + bone.name +
-        " Position: " + nf(pos.x, 1, 2) + " " +
-        nf(pos.y, 1, 2) + " " + nf(pos.z, 1, 2)
-      );
     }
-  }
 
   void drawBonesStatic() {
     fill(255, 255, 0); // Yellow
@@ -1027,6 +1304,7 @@ void updateMeshVertices() {
       }
     }
   }
+  
   void drawBonesAnimated() {
     fill(255, 255, 0); // Yellow
     noStroke();
@@ -1049,39 +1327,39 @@ void updateMeshVertices() {
     }
   }
   
-PShape renderSubmesh(int submeshIndex) {
-    if (submeshIndex < 0 || submeshIndex >= submeshes.size()) {
-        println("Error: Invalid submesh index");
-        return null;
-    }
+  PShape renderSubmesh(int submeshIndex) {
+      if (submeshIndex < 0 || submeshIndex >= submeshes.size()) {
+          println("Error: Invalid submesh index");
+          return null;
+      }
+  
+      Submesh submesh = submeshes.get(submeshIndex);
+      PShape part = createShape();
+      part.beginShape(TRIANGLES);
+      part.texture(texture);
+      part.textureMode(NORMAL);
+      part.noStroke();
+  
+      for (int[] tri : submesh.triangles) {
+          for (int index : tri) {
+              if (index >= vertices.size()) {
+                  println("Error: Invalid vertex index", index);
+                  continue;
+              }
+              PVector v = vertices.get(index);
+              PVector uv = uvs.get(index);
+              part.vertex(v.x, v.y, v.z, uv.x, uv.y);
+          }
+      }
+      part.endShape();
+      return part;
+  }
 
-    Submesh submesh = submeshes.get(submeshIndex);
-    PShape part = createShape();
-    part.beginShape(TRIANGLES);
-    part.texture(texture);
-    part.textureMode(NORMAL);
-    part.noStroke();
-
-    for (int[] tri : submesh.triangles) {
-        for (int index : tri) {
-            if (index >= vertices.size()) {
-                println("Error: Invalid vertex index", index);
-                continue;
-            }
-            PVector v = vertices.get(index);
-            PVector uv = uvs.get(index);
-            part.vertex(v.x, v.y, v.z, uv.x, uv.y);
-        }
-    }
-    part.endShape();
-    return part;
-}
 
   void draw() {
     updateAnimation();
     shape(mesh);
-    
-    /*
+
     // Render only the second submesh (index 1)
     PShape submeshShape = renderSubmesh(1); // Change index to test other submeshes
     if (submeshShape != null) {
