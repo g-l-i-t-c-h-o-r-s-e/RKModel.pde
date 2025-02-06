@@ -27,6 +27,8 @@ void setup() {
   tex = loadImage("pony_ponyville_162.png"); // texture image
   model = new RKModel(modelFolder + "pony_type01_muffins_lod1.rk", tex);
   model.loadAnimations(modelFolder + "pony_type01.anim");
+  //model.playAnimation("apple_idle_01_l", true);
+
 
   if (model.animationNames.size() > 0) {
     model.playAnimation(model.animationNames.get(currentAnimationIndex), loop);
