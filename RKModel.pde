@@ -408,7 +408,7 @@ class RKModel {
   int blinkCounter = 0;
   int blinkDuration = 3; // Number of frames to keep eyes shut
   String currentEyeMode = "open"; // Track current eye mode outside of blinking
-  String animFile;
+  String anim_File;
 
   
   
@@ -438,7 +438,7 @@ class RKModel {
     computeInverseBindMatrices();
     buildMesh();
     applySkinning();
-    loadVisibilityXML(modelFolder + anim_file.replace(".anim", ".xml"));
+    loadVisibilityXML(modelFolder + animFile.replace(".anim", ".xml"));
     printSummary();
   }
 
@@ -606,8 +606,8 @@ class RKModel {
       }
   }
   
-  void loadAnimations(String animFile) {
-    byte[] data = loadBytes(animFile);
+  void loadAnimations(String anim_File) {
+    byte[] data = loadBytes(anim_File);
     if (data == null) return;
     
     animationData = new RKAnimation();
@@ -630,9 +630,9 @@ class RKModel {
     }
 
     // Load animation clips with proper CSV parsing
-    String csvFile = animFile.replace(".anim", ".csv");
+    String csvFile = anim_File.replace(".anim", ".csv");
     println(csvFile);
-    animXML = animFile.replace(".anim", ".xml");
+    animXML = anim_File.replace(".anim", ".xml");
     println(animXML);
     String[] lines = loadStrings(csvFile);
     if (lines != null) {
@@ -678,7 +678,7 @@ class RKModel {
     }
     
     hasAnimations = true;
-    println("Loaded animation:", animFile);
+    println("Loaded animation:", anim_File);
     println("- Valid Frames:", animationData.frames.size());
     println("- Registered Clips:", animations.size());
   }
