@@ -22,20 +22,23 @@ int gifOutputHeight = 400;
 String modelFolder = "models/";
 String animFile = "pony_type01.anim";
 String modelFile = "pony_type01_muffins_lod1.rk";
+String textureFile = "pony_ponyville_162.png";
 
 void setup() {
   size(1200, 800, P3D);
   
   // Load texture and model
-  tex = loadImage("pony_ponyville_162.png"); // texture image
+  //tex = loadImage(modelFolder + model.materials.get(0)+".png"); //wip
+  tex = loadImage(textureFile);
   model = new RKModel(modelFolder + modelFile, tex);
   model.loadAnimations(modelFolder + animFile);
+  //model.playAnimation("apple_idle_01_l",true,6,9);
+  model.playAnimation(model.animationNames.get(324),true,27,43);
 
 
-  // Play an animation if available
-  if (model.animationNames.size() > 0) {
-    model.playAnimation(model.animationNames.get(currentAnimationIndex), loop);
-  }
+  //if (model.animationNames.size() > 0) {
+  //  model.playAnimation(model.animationNames.get(currentAnimationIndex), loop,0,0);
+  //}
   
   // Set up PeasyCam
   cam = new PeasyCam(this, 130);
@@ -57,6 +60,7 @@ void draw() {
     background(30); // fallback color
   }
   
+//println(model.currentAnim.currentStartFrame);
   PGraphicsOpenGL pgl = (PGraphicsOpenGL) g;
   pgl.beginPGL();
     pgl.pgl.enable(PGL.CULL_FACE);
@@ -74,35 +78,39 @@ void draw() {
   pgl.endPGL();
   
   // When recording is requested, wait for the first frame of the animation (assumed to be 0) to start.
-  if (recordRequested && (model.currentAnim.currentFrame - model.currentAnim.clip.startFrame) == 0) {
-    // Create a new GifMaker with a frame delay of 16 ms (~60 FPS)
+if (recordRequested && model.currentAnim != null) {
+  // Start recording when the animation reaches the adjusted start frame
+  if (model.currentAnim.currentFrame == model.currentAnim.currentStartFrame) {
     gifExport = new GifMaker(this, "recording.gif", 16);
-    gifExport.setQuality(1);  // Lower value means higher quality (1 is best quality)
-    gifExport.setRepeat(0);  // Loop forever (or change to -1 for no looping)
-
+    gifExport.setQuality(1);
+    gifExport.setRepeat(0);
     isRecording = true;
     recordRequested = false;
     println("Started GIF recording...");
   }
-  
-  // If recording, capture and add a scaled frame.
-  if (isRecording) {
-    // Capture the current canvas image...
-    PImage currentFrameImg = get();
-    // ...and resize it to the desired output GIF resolution.
-    currentFrameImg.resize(gifOutputWidth, gifOutputHeight);
-    gifExport.addFrame(currentFrameImg);
-    
-    // When we reach the last frame of the animation, finish the gif.
-    if ((model.currentAnim.currentFrame - model.currentAnim.clip.startFrame) == model.frameDur - 1) {
-      gifExport.finish();
-      isRecording = false;
-      println("Finished GIF recording.");
-    }
+}
+
+if (isRecording && model.currentAnim != null) {
+  PImage currentFrameImg = get();
+  currentFrameImg.resize(gifOutputWidth, gifOutputHeight);
+  gifExport.addFrame(currentFrameImg);
+
+  // Calculate duration based on adjusted frames
+  //int adjustedFrameDur = model.currentAnim.currentEndFrame - model.currentAnim.currentStartFrame + 1;
+
+  // Stop when reaching the adjusted end frame
+  if (model.currentAnim.currentFrame >= model.currentAnim.currentEndFrame) {
+    gifExport.finish();
+    isRecording = false;
+    println("Finished GIF recording.");
   }
+}
   
-  // (Optional) Print out the current frame and total frames for debugging.
-  println("Frame: " + (model.currentAnim.currentFrame - model.currentAnim.clip.startFrame) + " of " + model.frameDur);
+if (model.currentAnim != null) {
+  int relativeFrame = model.currentAnim.currentFrame - model.currentAnim.currentStartFrame;
+  int totalFrames = model.currentAnim.currentEndFrame - model.currentAnim.currentStartFrame + 1;
+  println("Frame: " + relativeFrame + " of " + (totalFrames - 1));
+}
 }
 
 void keyPressed() {
@@ -111,11 +119,11 @@ void keyPressed() {
   // Switch animations with the arrow keys.
   if (keyCode == RIGHT) {
     currentAnimationIndex = (currentAnimationIndex + 1) % model.animationNames.size();
-    model.playAnimation(model.animationNames.get(currentAnimationIndex), loop);
+    model.playAnimation(model.animationNames.get(currentAnimationIndex), loop,0,0);
     println("Animation index: " + currentAnimationIndex);
   } else if (keyCode == LEFT) {
     currentAnimationIndex = (currentAnimationIndex - 1 + model.animationNames.size()) % model.animationNames.size();
-    model.playAnimation(model.animationNames.get(currentAnimationIndex), loop);
+    model.playAnimation(model.animationNames.get(currentAnimationIndex), loop,0,0);
     println("Animation index: " + currentAnimationIndex);
   }
   
