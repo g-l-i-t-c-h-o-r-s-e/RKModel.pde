@@ -125,18 +125,22 @@ class AnimationClip {
 
 class AnimationState {
   AnimationClip clip;
+  int currentStartFrame;
+  int currentEndFrame;
   int currentFrame;
   float frameTime;
   boolean playing;
   long lastUpdate;
 
-  AnimationState(AnimationClip clip) {
+  AnimationState(AnimationClip clip, int startFrame, int endFrame) {
     this.clip = clip;
+    this.currentStartFrame = startFrame;
+    this.currentEndFrame = endFrame;
     reset();
   }
 
   void reset() {
-    currentFrame = clip.startFrame;
+    currentFrame = currentStartFrame; // Start at adjusted start frame
     frameTime = 0;
     playing = false;
     lastUpdate = millis();
@@ -146,22 +150,21 @@ class AnimationState {
     if (!playing) return;
 
     long currentTime = millis();
-    frameTime += (currentTime - lastUpdate) / 1000.0; // Update frame time
+    frameTime += (currentTime - lastUpdate) / 1000.0;
     lastUpdate = currentTime;
 
-    float frameDuration = 1.0 / clip.fps; // Duration of each frame
+    float frameDuration = 1.0 / clip.fps;
 
-    // Advance to the next frame if enough time has passed
     if (frameTime >= frameDuration) {
-      frameTime = 0; // Reset frame time
-      currentFrame++; // Move to the next frame
+      frameTime = 0;
+      currentFrame++;
 
-      // Handle looping or stopping at the end
-      if (currentFrame == clip.endFrame) {
+      // Loop or stop when exceeding currentEndFrame
+      if (currentFrame > currentEndFrame) {
         if (clip.loop) {
-          currentFrame = clip.startFrame;
+          currentFrame = currentStartFrame; // Loop to adjusted start frame
         } else {
-          currentFrame = clip.endFrame;
+          currentFrame = currentEndFrame;
           playing = false;
         }
       }
@@ -683,35 +686,66 @@ class RKModel {
     println("- Registered Clips:", animations.size());
   }
   
-  void playAnimation(String name, boolean loop) {
+  void playAnimation(String name, boolean loop, int startFrame, int endFrame) {
       for (AnimationClip clip : animations) {
           if (clip.name.equals(name)) {
-              currentAnim = new AnimationState(clip);
+              int adjustedStart = clip.startFrame + startFrame; // Relative to clip's start
+              int adjustedEnd = clip.startFrame + endFrame;     // Relative to clip's start
+  
+              // Handle special cases:
+              if (startFrame == 0 && endFrame == 0) {
+                  // Use the clip's default frames
+                  adjustedStart = clip.startFrame;
+                  adjustedEnd = clip.endFrame;
+              } else if (endFrame == 0) {
+                  // Use custom start + clip's natural end
+                  adjustedStart = clip.startFrame + startFrame;
+                  adjustedEnd = clip.endFrame;
+              }
+  
+              // Clamp values to valid ranges
+              adjustedStart = constrain(adjustedStart, clip.startFrame, clip.endFrame);
+              adjustedEnd = constrain(adjustedEnd, clip.startFrame, clip.endFrame);
+  
+              // Ensure start <= end
+              if (adjustedStart > adjustedEnd) {
+                  adjustedStart = clip.startFrame;
+                  adjustedEnd = clip.endFrame;
+                  println("Invalid frame range. Using default.");
+              }
+  
+              // Create a new AnimationState with adjusted frames
+              currentAnim = new AnimationState(clip, adjustedStart, adjustedEnd);
               currentAnim.clip.loop = loop;
-              currentAnim.clip.fps = 15;
               currentAnim.playing = true;
-              
-              frameDur = clip.endFrame - clip.startFrame;
-              
-              println("Playing clip:", name, "for", clip.endFrame - clip.startFrame, "frames");
+  
+              frameDur = adjustedEnd - adjustedStart + 1;
+  
+              println("Playing clip:", name, "from", adjustedStart, "to", adjustedEnd);
               return;
           }
       }
       println("Animation not found:", name);
   }
-
-
+  
+  
   void updateAnimation() {
-    if (currentAnim == null || !currentAnim.playing) return;
-
-    currentAnim.update();
-    if (currentAnim != null && hasAnimations) {
-      updateVisibilityForFrame(currentAnim.clip.name, (currentAnim.currentFrame - currentAnim.clip.startFrame));
-    }
-    applyBonePoses();
-    applySkinning();
-
-
+      if (currentAnim == null || !currentAnim.playing) return;
+  
+      currentAnim.update();
+      if (currentAnim != null && hasAnimations) {
+          int currentFrame = currentAnim.currentFrame;
+          if (currentFrame > currentAnim.currentEndFrame) {
+              if (currentAnim.clip.loop) {
+                  currentAnim.currentFrame = currentAnim.currentStartFrame; // Loop to adjusted start
+              } else {
+                  currentAnim.playing = false;
+              }
+          }
+          updateVisibilityForFrame(currentAnim.clip.name, (currentFrame - currentAnim.currentStartFrame));
+      }
+      applyBonePoses();
+      applySkinning();
   }
 
   void applyBonePoses() {
@@ -719,10 +753,11 @@ class RKModel {
 
     float t = currentAnim.frameTime * currentAnim.clip.fps;
     int frameA = currentAnim.currentFrame;
-    int frameB = min(frameA + 1, currentAnim.clip.endFrame);
+    int frameB = min(frameA + 1, currentAnim.currentEndFrame); // Use adjusted end frame
 
     AnimationFrame poseA = animationData.frames.get(frameA);
     AnimationFrame poseB = animationData.frames.get(frameB);
+
 
     for (int i = 0; i < bones.size(); i++) {
       Bone bone = bones.get(i);
@@ -1201,7 +1236,7 @@ class RKModel {
   
       ArrayList<FrameVisibility> frames = visibilityData.animations.get(animName);
       if (frames == null) {
-          println("No frames found for animation: '" + animName + "'");
+          //println("No frames found for animation: '" + animName + "'");
           return;
       }
   
@@ -1345,29 +1380,26 @@ class RKModel {
       }
   }
 
-void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
-    int index = submeshes.indexOf(sm);
-    // Note: We originally skipped index 0 because it was the main submesh.
-    // In case the initial eye submesh is stored at index 0, you might remove this check,
-    // or add a condition so that only the main submesh is preserved.
-    if (index <= 0) return; 
-
-    int childIndex = index - 1; // Adjust for childShapes indexing
-    if (childIndex >= 0 && childIndex < childShapes.size()) {
-        PShape child = childShapes.get(childIndex);
-        toggleChildVisibility(child, visible); 
-    }
-}
-
-void toggleChildVisibility(PShape shape, boolean show) {
-    if (shape == null) return;
-
-    if (show) {
-        shape.resetMatrix();
-    } else {
-        shape.scale(0);
-    }
-}
+  void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
+      int index = submeshes.indexOf(sm);
+      if (index <= 0) return; 
+  
+      int childIndex = index - 1; // Adjust for childShapes indexing
+      if (childIndex >= 0 && childIndex < childShapes.size()) {
+          PShape child = childShapes.get(childIndex);
+          toggleChildVisibility(child, visible); 
+      }
+  }
+  
+  void toggleChildVisibility(PShape shape, boolean show) {
+      if (shape == null) return;
+  
+      if (show) {
+          shape.resetMatrix();
+      } else {
+          shape.scale(0);
+      }
+  }
 
 
 
