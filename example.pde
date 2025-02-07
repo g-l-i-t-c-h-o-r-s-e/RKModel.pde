@@ -39,7 +39,7 @@ void setup() {
   model = new RKModel(modelFolder + modelFile, tex);
   model.loadAnimations(modelFolder + animFile);
   //model.playAnimation("apple_idle_01_l",true,6,9);
-  model.playAnimation(model.animationNames.get(324), true, 27, 43);
+  model.playAnimation(model.animationNames.get(22), true, 30, 40);
 
   //if (model.animationNames.size() > 0) {
   //  model.playAnimation(model.animationNames.get(currentAnimationIndex), loop,0,0);
@@ -96,6 +96,10 @@ void draw() {
     currentFrameImg.resize(gifOutputWidth, gifOutputHeight);
     gifExport.addFrame(currentFrameImg);
 
+    int relativeFrame = model.currentAnim.currentFrame - model.currentAnim.currentStartFrame;
+    int totalFrames = model.currentAnim.currentEndFrame - model.currentAnim.currentStartFrame + 1;
+    println("Frame: " + relativeFrame + " of " + (totalFrames - 1));    
+
     if (model.currentAnim.currentFrame >= model.currentAnim.currentEndFrame) {
       gifExport.finish();
       isRecording = false;
@@ -103,11 +107,6 @@ void draw() {
     }
   }
   
-  if (model.currentAnim != null) {
-    int relativeFrame = model.currentAnim.currentFrame - model.currentAnim.currentStartFrame;
-    int totalFrames = model.currentAnim.currentEndFrame - model.currentAnim.currentStartFrame + 1;
-    println("Frame: " + relativeFrame + " of " + (totalFrames - 1));
-  }
 }
 
 void keyPressed() {
