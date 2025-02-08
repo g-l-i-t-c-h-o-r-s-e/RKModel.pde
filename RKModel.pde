@@ -425,7 +425,7 @@ class RKModel {
     return s.trim();
   }
 
-  RKModel(String filename, PImage tex) {
+  RKModel(String filename) {
     byte[] data = loadBytes(filename);
     texture = tex;
     header = new RKHeader(data);
@@ -441,7 +441,12 @@ class RKModel {
     computeInverseBindMatrices();
     buildMesh();
     applySkinning();
-    loadVisibilityXML(modelFolder + animFile.replace(".anim", ".xml"));
+    
+    String getFiles = modelFile;
+    getFiles = getXMLFile(getFiles);
+    println(getFiles);
+    //
+    loadVisibilityXML(modelFolder + getFiles + ".xml");
     printSummary();
   }
 
@@ -482,6 +487,84 @@ class RKModel {
   
           offset += 4; // Move to the next attribute
       }
+  }
+  
+    String getCSVFile(String filename) {
+    String[][] patterns = {
+      {"type01", "pony_type01"},
+      {"type02", "pony_type02_con_lod2"},
+      {"type03", "pony_type03"},
+      {"type04", "pony_type01"},
+      {"type05", "pony_type01"},
+      {"type06", "pony_type06"},
+      {"type07", "pony_type07"},
+      {"type08", "pony_type08"},
+      {"type09", "pony_type09"},
+      {"type10", "pony_type10"},
+      {"type11", "pony_type11_timech_lod1"},
+      {"type12", "pony_type12"},
+      {"type13", "pony_type13"}
+    };
+    
+    for (String[] pattern : patterns) {
+      if (filename.contains(pattern[0])) {
+        return pattern[1];
+      }
+    }
+    
+    return null;
+  }
+
+    String getXMLFile(String filename) {
+    String[][] patterns = {
+      {"type01", "pony_type01"},
+      {"type02", "pony_type01"},
+      {"type03", "pony_type03"},
+      {"type04", "pony_type01"},
+      {"type05", "pony_type01"},
+      {"type06", "pony_type06"},
+      {"type07", "pony_type07"},
+      {"type08", "pony_type08"},
+      {"type09", "pony_type09"},
+      {"typ10", "pony_type10"},
+      {"type11", "pony_type12"},
+      {"type12", "pony_type12"},
+      {"type13", "pony_type13"}
+    };
+    
+    for (String[] pattern : patterns) {
+      if (filename.contains(pattern[0])) {
+        return pattern[1];
+      }
+    }
+    
+    return null;
+  }
+  
+    String getAnimFile(String filename) {
+    String[][] patterns = {
+      {"type01", "pony_type01.anim"},
+      {"type02", "pony_type01.anim"},
+      {"type03", "pony_type03.anim"},
+      {"type04", "pony_type01.anim"},
+      {"type05", "pony_type01.anim"},
+      {"type06", "pony_type06.anim"},
+      {"type07", "pony_type07.anim"},
+      {"type08", "pony_type08.anim"},
+      {"type09", "pony_type09.anim"},
+      {"type10", "pony_type10.anim"},
+      {"type11", "pony_type11_timech_lod1.anim"},
+      {"type12", "pony_type12.anim"},
+      {"type13", "pony_type13.anim"}
+    };
+    
+    for (String[] pattern : patterns) {
+      if (filename.contains(pattern[0])) {
+        return pattern[1];
+      }
+    }
+    
+    return null;
   }
   
   void readSubmeshInfo(byte[] data) {
@@ -526,6 +609,7 @@ class RKModel {
     for (int i=0; i<matSec.count; i++) {
       int off = matSec.offset + i*matSize;
       materials.add(header.readString(data, off, 64));
+      texture = loadImage(textureFolder+materials.get(materials.size()-1)+ ".png"); //temporary
       println(i+": "+materials.get(materials.size()-1));
     }
   }
@@ -633,9 +717,11 @@ class RKModel {
     }
 
     // Load animation clips with proper CSV parsing
-    String csvFile = anim_File.replace(".anim", ".csv");
+    String getFiles = modelFile;
+    animXML = modelFolder + getXMLFile(getFiles) + ".xml";
+    
+    String csvFile = modelFolder + getCSVFile(getFiles) + ".csv";
     println(csvFile);
-    animXML = anim_File.replace(".anim", ".xml");
     println(animXML);
     String[] lines = loadStrings(csvFile);
     if (lines != null) {
@@ -747,6 +833,7 @@ class RKModel {
       applyBonePoses();
       applySkinning();
   }
+  
 
   void applyBonePoses() {
     if (!hasAnimations || currentAnim == null) return;
