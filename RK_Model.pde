@@ -193,6 +193,7 @@ class Submesh {
   boolean defaultVisible;
   int trianglesCount;
   ArrayList<int[]> triangles;
+  int[] vertexIndices;
   int offset;
   int material;
   int unknown;
@@ -408,7 +409,7 @@ class RKModel {
   ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
   ArrayList<PShape> childShapes = new ArrayList<PShape>();
   AnimVisibilityData visibilityData;
-  PImage texture;
+  ArrayList<PImage> textures = new ArrayList<PImage>();
   float scale = 1;
   int frameDur;
   ArrayList<PVector> skinnedVerts = new ArrayList<>();
@@ -437,7 +438,7 @@ class RKModel {
 
   RKModel(String filename) {
     byte[] data = loadBytes(filename);
-    texture = tex;
+    //texture = tex;
     header = new RKHeader(data);
     
     if (!header.magic.equals("RKFORMAT")) return;
@@ -454,10 +455,12 @@ class RKModel {
     
     String getFiles = modelFile;
     getFiles = getXMLFile(getFiles);
-    println(getFiles);
-    //
+
     loadVisibilityXML(modelFolder + getFiles + ".xml");
     printSummary();
+    sections.clear(); // clear stuff up for now
+    sections = null; // clear stuff up for now
+    data = null;    // clear stuff up for now
   }
 
   void loadSections(byte[] data) {
@@ -615,12 +618,21 @@ class RKModel {
     if (matSec == null) return;
     
     println("\nMaterials:");
-    int matSize = 320;
-    for (int i=0; i<matSec.count; i++) {
-      int off = matSec.offset + i*matSize;
-      materials.add(header.readString(data, off, 64));
-      texture = loadImage(textureFolder+materials.get(materials.size()-1)+ ".png"); //temporary
-      println(i+": "+materials.get(materials.size()-1));
+    int matSize = matSec.byteLength / matSec.count;
+    for (int i = 0; i < matSec.count; i++) {
+      int off = matSec.offset + i * matSize;
+      String matName = header.readString(data, off, 64);
+      materials.add(matName);
+      
+      // Load texture for each material and add to the list
+      PImage tex = loadImage(textureFolder + matName + ".png");
+      if (tex != null) {
+        textures.add(tex);
+      } else {
+        println("Warning: Failed to load texture for material " + matName);
+        textures.add(null); // Add null as a placeholder
+      }
+      //println(i + ": " + matName);
     }
   }
 
@@ -1047,11 +1059,11 @@ class RKModel {
                   uv.x = u_float;
                   uv.y = v_float;
               }
-              
+
               //wtf lol
               uv.y = (uv.y + 1.0f) / 2.0f;
               uv.y *= this.uvScale;
-  
+
               vertices.add(pos);
               uvs.add(uv);
           }
@@ -1120,6 +1132,21 @@ class RKModel {
                     submesh.triangles.add(tri);
                 }
             }
+        }
+        
+        for (Submesh submesh : submeshes) {
+            ArrayList<Integer> indicesList = new ArrayList<>();
+            for (int[] tri : submesh.triangles) {
+                for (int idx : tri) {
+                    indicesList.add(idx);
+                }
+            }
+            submesh.vertexIndices = new int[indicesList.size()];
+            for (int i = 0; i < indicesList.size(); i++) {
+                submesh.vertexIndices[i] = indicesList.get(i);
+            }
+            submesh.triangles.clear(); // Free memory
+            submesh.triangles = null;
         }
      }
 
@@ -1309,18 +1336,28 @@ class RKModel {
   PShape createSubmeshShape(Submesh submesh) {
       PShape part = createShape();
       part.beginShape(TRIANGLES);
-      part.texture(texture);
+      
+      // Assign the correct texture based on the submesh's material index
+      if (submesh.material >= 0 && submesh.material < textures.size()) {
+          PImage tex = textures.get(submesh.material);
+          if (tex != null) {
+              part.texture(tex);
+          }
+      } else {
+          println("Warning: Invalid material index " + submesh.material + " for submesh " + submesh.name);
+      }
+      
       part.textureMode(NORMAL);
       part.noStroke();
   
-      // Preallocate vertices in the PShape
-      for (int[] tri : submesh.triangles) {
-          for (int index : tri) {
-              PVector v = vertices.get(index);
-              PVector uv = uvs.get(index);
+      for (int idx : submesh.vertexIndices) {
+          if (idx < vertices.size() && idx < uvs.size()) {
+              PVector v = vertices.get(idx);
+              PVector uv = uvs.get(idx);
               part.vertex(v.x, v.y, v.z, uv.x, uv.y);
           }
       }
+  
       part.endShape();
       return part;
   }
@@ -1335,39 +1372,23 @@ class RKModel {
   }
 
   void updateMeshVertices() {
-      if (mesh == null) {
-          println("Error: Mesh is null, cannot update vertices.");
-          return;
-      }
+      if (mesh == null) return;
   
       int submeshIndex = 0;
-      // Iterate over all children of the mesh.
       for (PShape part : mesh.getChildren()) {
-          // Make sure the submesh index is valid.
           if (submeshIndex >= submeshes.size()) break;
           Submesh submesh = submeshes.get(submeshIndex);
   
-          int vertexIndex = 0;
-          // Calculate how many vertices we expect for this submesh.
-          int expectedVertexCount = submesh.triangles.size() * 3; // 3 vertices per triangle
-          if (part.getVertexCount() < expectedVertexCount) {
-              println("Error: PShape does not have enough vertices for submesh " + submesh.name);
-              continue;
-          }
-  
-          // Update vertices for each triangle.
-          for (int[] tri : submesh.triangles) {
-              for (int j = 0; j < 3; j++) {
-                  int originalIndex = tri[j];
+          if (submesh.vertexIndices != null) {
+              for (int i = 0; i < submesh.vertexIndices.length; i++) {
+                  int originalIndex = submesh.vertexIndices[i];
                   if (originalIndex < skinnedVerts.size()) {
                       PVector v = skinnedVerts.get(originalIndex);
-                      part.setVertex(vertexIndex, v.x, v.y, v.z);
-                      vertexIndex++;
-                  } else {
-                      println("Error: Vertex index out of bounds for submesh " + submesh.name);
+                      part.setVertex(i, v.x, v.y, v.z);
                   }
               }
           }
+  
           submeshIndex++;
       }
   }
@@ -1671,6 +1692,7 @@ class RKModel {
     }
   }
   
+
   PShape renderSubmesh(int submeshIndex) {
       if (submeshIndex < 0 || submeshIndex >= submeshes.size()) {
           println("Error: Invalid submesh index");
@@ -1680,7 +1702,17 @@ class RKModel {
       Submesh submesh = submeshes.get(submeshIndex);
       PShape part = createShape();
       part.beginShape(TRIANGLES);
-      part.texture(texture);
+
+      // Assign the correct texture based on the submesh's material index
+      if (submesh.material >= 0 && submesh.material < textures.size()) {
+          PImage tex = textures.get(submesh.material);
+          if (tex != null) {
+              part.texture(tex);
+          }
+      } else {
+          println("Warning: Invalid material index " + submesh.material + " for submesh " + submesh.name);
+      }
+      
       part.textureMode(NORMAL);
       part.noStroke();
   
