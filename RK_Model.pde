@@ -142,10 +142,10 @@ class AnimationState {
   }
 
   void reset() {
-    currentFrame = currentStartFrame; // Start at adjusted start frame
-    frameTime = 0;
-    playing = false;
-    lastUpdate = millis();
+      currentFrame = currentStartFrame;
+      frameTime = 0;
+      playing = true; // Force playing state on reset
+      lastUpdate = millis();
   }
 
   void update() {
@@ -426,7 +426,9 @@ class RKModel {
   int blinkDuration = 3; // Number of frames to keep eyes shut
   String currentEyeMode = "open"; // Track current eye mode outside of blinking
   String anim_File;
-
+  boolean isInTransition() {
+      return outgoingAnim != null || incomingAnim != null;
+  }
   
   
   
