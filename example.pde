@@ -38,6 +38,7 @@ String backgroundImage = "lol2.png";
     model = new RKModel(modelFolder + modelFile);
     String animFile = model.getAnimFile(modelFile); //detect anim
     model.loadAnimations(modelFolder + animFile);
+    model.selectSet(0);
     
     //model.playAnimation("apple_idle_01_l",true,6,9);
     model.playAnimation(model.animationNames.get(0), true, 0, 0);
