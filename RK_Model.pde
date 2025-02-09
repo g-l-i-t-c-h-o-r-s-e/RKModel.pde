@@ -536,9 +536,9 @@ class RKModel {
       {"type07", "pony_type07"},
       {"type08", "pony_type08"},
       {"type09", "pony_type09"},
-      {"typ10", "pony_type10"},
-      {"type11", "pony_type12"},
-      {"type12", "pony_type12"},
+      {"type10", "pony_type10"},
+      {"type11", "pony_type13"},
+      {"type12", "pony_type10"},
       {"type13", "pony_type13"}
     };
     
@@ -713,7 +713,7 @@ class RKModel {
     // Read header with frame type verification
     animationData.boneCount = readInt4(data, offset);
     if (animationData.boneCount != bones.size()) {
-        println("Animation/model bone count mismatch!");
+        println("Animation/model bone count mismatch!", anim_File, "\nAnimation Bones:"+animationData.boneCount, "Mesh Bones "+bones.size());
         return;
     }
     int frameCount = readInt4(data, offset+4);
@@ -1600,12 +1600,12 @@ class RKModel {
       }
   }
 
-void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
-    if (childShapeMap.containsKey(sm)) {
-        PShape child = childShapeMap.get(sm);
-        toggleChildVisibility(child, visible);
-    }
-}
+  void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
+      if (childShapeMap.containsKey(sm)) {
+          PShape child = childShapeMap.get(sm);
+          toggleChildVisibility(child, visible);
+      }
+  }
   
   void toggleChildVisibility(PShape shape, boolean show) {
       if (shape == null) return;
