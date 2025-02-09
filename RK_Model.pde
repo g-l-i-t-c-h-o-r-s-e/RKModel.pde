@@ -394,19 +394,22 @@ class RKModel {
   RKAnimation animationData;
   ArrayList<String> animationNames = new ArrayList<String>();
   boolean hasAnimations = false;
+  AnimationState outgoingAnim = null;
+  AnimationState incomingAnim = null;
+  float blendFactor = 0.0f;
+  float blendDuration = 0.3f; // Transition duration in seconds
+  long blendStartTime = 0;
   PShape mesh;
   PShape mainGeometry;
   ArrayList<Submesh> submeshes = new ArrayList<>();
   HashMap<String, Submesh> submeshMap = new HashMap<>();
-  HashMap<Submesh, PShape> childShapeMap = new HashMap<>();
-  
+  HashMap<Submesh, PShape> childShapeMap = new HashMap<>();  
   Map<Integer, List<Submesh>> setMap = new HashMap<>();
   List<Submesh> defaultNonEyeSubmeshes = new ArrayList<>();
   List<Submesh> defaultEyeSubmeshes = new ArrayList<>();
   List<Integer> availableSets = new ArrayList<>();
   int selectedSet = 0;
-
-  ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
+  ArrayList<PShape> meshParts = new ArrayList<>();
   ArrayList<PShape> childShapes = new ArrayList<PShape>();
   AnimVisibilityData visibilityData;
   ArrayList<PImage> textures = new ArrayList<PImage>();
@@ -822,25 +825,45 @@ class RKModel {
                   println("Invalid frame range. Using default.");
               }
   
-              // Create a new AnimationState with adjusted frames
-              currentAnim = new AnimationState(clip, adjustedStart, adjustedEnd);
-              currentAnim.clip.loop = loop;
-              currentAnim.playing = true;
-  
-              frameDur = adjustedEnd - adjustedStart + 1;
-  
-              println("Playing clip:", name, "from", adjustedStart, "to", adjustedEnd);
-              return;
-          }
-      }
-      println("Animation not found:", name);
-  }
+                AnimationState newAnim = new AnimationState(clip, adjustedStart, adjustedEnd);
+                newAnim.clip.loop = loop;
+                newAnim.playing = true;
+
+                if (currentAnim != null) {
+                    outgoingAnim = currentAnim;
+                    outgoingAnim.playing = false; // Freeze outgoing animation
+                    incomingAnim = newAnim;
+                    blendFactor = 0.0f;
+                    blendStartTime = millis();
+                } else {
+                    currentAnim = newAnim;
+                }
+
+                println("Playing clip:", name, "from", adjustedStart, "to", adjustedEnd);
+                return;
+            }
+        }
+        println("Animation not found:", name);
+    }
   
   
   void updateAnimation() {
-      if (currentAnim == null || !currentAnim.playing) return;
-  
-      currentAnim.update();
+      if (outgoingAnim != null && incomingAnim != null) {
+          incomingAnim.update();
+
+          long currentTime = millis();
+          float elapsed = (currentTime - blendStartTime) / 1000.0f;
+          blendFactor = elapsed / blendDuration;
+
+          if (blendFactor >= 1.0f) {
+              currentAnim = incomingAnim;
+              outgoingAnim = null;
+              incomingAnim = null;
+              blendFactor = 0.0f;
+          }
+      } else if (currentAnim != null && currentAnim.playing) {
+          currentAnim.update();
+      }
       if (currentAnim != null && hasAnimations) {
           int currentFrame = currentAnim.currentFrame;
           if (currentFrame > currentAnim.currentEndFrame) {
@@ -858,66 +881,125 @@ class RKModel {
   
 
   void applyBonePoses() {
-    if (!hasAnimations || currentAnim == null) return;
+    if (!hasAnimations) return;
+      if (outgoingAnim != null && incomingAnim != null) {
+          for (int i = 0; i < bones.size(); i++) {
+              Bone bone = bones.get(i);
+              int boneId = bone.id;
+  
+              BonePose poseOutgoing = getInterpolatedPose(outgoingAnim, boneId);
+              BonePose poseIncoming = getInterpolatedPose(incomingAnim, boneId);
+  
+              PVector pos = PVector.lerp(poseOutgoing.pos, poseIncoming.pos, blendFactor);
+  
+              //cant forget teh dot product check
+              float[] qOut = poseOutgoing.quat;
+              float[] qIn = poseIncoming.quat;
+              float dot = qOut[0] * qIn[0] + qOut[1] * qIn[1] + qOut[2] * qIn[2] + qOut[3] * qIn[3];
+              if (dot < 0) {
+                  qIn = new float[]{-qIn[0], -qIn[1], -qIn[2], -qIn[3]};
+              }
+              float[] quat = slerp(qOut, qIn, blendFactor);
+              // -----------------------------------------
+  
+              PMatrix3D rotationMatrix = quatToMatrix(quat);
+              PMatrix3D translationMatrix = new PMatrix3D();
+              translationMatrix.translate(pos.x * scale, pos.y * scale, pos.z * scale);
+              translationMatrix.apply(rotationMatrix);
+              bone.animatedMatrix = translationMatrix;
+              bone.animatedMatrix.scale(scale);
+          }
+      } else if (currentAnim != null) {
 
-    float t = currentAnim.frameTime * currentAnim.clip.fps;
-    int frameA = currentAnim.currentFrame;
-    int frameB = min(frameA + 1, currentAnim.currentEndFrame); // Use adjusted end frame
+          float t = currentAnim.frameTime * currentAnim.clip.fps;
+          int frameA = currentAnim.currentFrame;
+          int frameB = min(frameA + 1, currentAnim.currentEndFrame);
 
-    AnimationFrame poseA = animationData.frames.get(frameA);
-    AnimationFrame poseB = animationData.frames.get(frameB);
+          AnimationFrame poseA = animationData.frames.get(frameA);
+          AnimationFrame poseB = animationData.frames.get(frameB);
 
-
-    for (int i = 0; i < bones.size(); i++) {
-      Bone bone = bones.get(i);
-      int boneId = bone.id;
-
-      if (boneId >= poseA.bones.size() || boneId >= poseB.bones.size()) continue;
-
-      BonePose pA = poseA.bones.get(boneId);
-      BonePose pB = poseB.bones.get(boneId);
-
-      // Position interpolation (existing code remains)
-      PVector animPosA = new PVector(pA.pos.x, pA.pos.y, pA.pos.z);
-      PVector animPosB = new PVector(pB.pos.x, pB.pos.y, pB.pos.z);
-      PVector pos = PVector.lerp(animPosA, animPosB, t);
-
-      // Convert quaternions and interpolate
-      float[] qA = { pA.quat[0], pA.quat[1], pA.quat[2], pA.quat[3] };
-      float[] qB = { pB.quat[0], pB.quat[1], pB.quat[2], pB.quat[3] };
+          for (int i = 0; i < bones.size(); i++) {
+            Bone bone = bones.get(i);
+            int boneId = bone.id;
       
-      // You need to apply the quaternion dot product check before performing spherical linear interpolation (slerp). 
-      // This ensures that the shortest path is taken during interpolation
+            if (boneId >= poseA.bones.size() || boneId >= poseB.bones.size()) continue;
+      
+            BonePose pA = poseA.bones.get(boneId);
+            BonePose pB = poseB.bones.get(boneId);
+      
+            // Position interpolation
+            PVector animPosA = new PVector(pA.pos.x, pA.pos.y, pA.pos.z);
+            PVector animPosB = new PVector(pB.pos.x, pB.pos.y, pB.pos.z);
+            PVector pos = PVector.lerp(animPosA, animPosB, t);
+      
+            // Convert quaternions and interpolate
+            float[] qA = { pA.quat[0], pA.quat[1], pA.quat[2], pA.quat[3] };
+            float[] qB = { pB.quat[0], pB.quat[1], pB.quat[2], pB.quat[3] };
+            
+            // You need to apply the quaternion dot product check before performing spherical linear interpolation (slerp). 
+            // This ensures that the shortest path is taken during interpolation
+            float dot = qA[0] * qB[0] + qA[1] * qB[1] + qA[2] * qB[2] + qA[3] * qB[3];
+            if (dot < 0) {
+                qB[0] = -qB[0];
+                qB[1] = -qB[1];
+                qB[2] = -qB[2];
+                qB[3] = -qB[3];
+            }
+            float[] quat = slerp(qA, qB, t);
+      
+            // Normalize the interpolated quaternion
+            float len = sqrt(quat[0]*quat[0] + quat[1]*quat[1] + quat[2]*quat[2] + quat[3]*quat[3]);
+            quat[0] /= len;
+            quat[1] /= len;
+            quat[2] /= len;
+            quat[3] /= len;
+      
+            // 1. Create rotation matrix from quaternion
+            PMatrix3D rotationMatrix = quatToMatrix(quat);
+            //normalizeScaling(rotationMatrix); doesnt help
+            
+            // 2. Apply translation to the rotated space
+            PMatrix3D translationMatrix = new PMatrix3D();
+            translationMatrix.translate(pos.x * scale, pos.y * scale, pos.z * scale);
+            
+            // 3. Combine as Translation * Rotation (T * R)
+            translationMatrix.apply(rotationMatrix);
+            bone.animatedMatrix = translationMatrix;
+            bone.animatedMatrix.scale(scale);
+          }
+          applySkinning();
+      }
+  }
+
+  private BonePose getInterpolatedPose(AnimationState animState, int boneId) {
+      if (animState == null || boneId < 0 || boneId >= animationData.boneCount) {
+          return new BonePose();
+      }
+  
+      int frameA = animState.currentFrame;
+      int frameB = min(frameA + 1, animState.currentEndFrame);
+      float t = animState.frameTime * animState.clip.fps;
+  
+      AnimationFrame frameA_data = animationData.frames.get(frameA);
+      AnimationFrame frameB_data = animationData.frames.get(frameB);
+  
+      BonePose pA = frameA_data.bones.get(boneId);
+      BonePose pB = frameB_data.bones.get(boneId);
+  
+      BonePose result = new BonePose();
+      result.pos = PVector.lerp(pA.pos, pB.pos, t);
+  
+      //cant forget teh dot product check
+      float[] qA = pA.quat;
+      float[] qB = pB.quat;
       float dot = qA[0] * qB[0] + qA[1] * qB[1] + qA[2] * qB[2] + qA[3] * qB[3];
       if (dot < 0) {
-          qB[0] = -qB[0];
-          qB[1] = -qB[1];
-          qB[2] = -qB[2];
-          qB[3] = -qB[3];
+          qB = new float[]{-qB[0], -qB[1], -qB[2], -qB[3]};
       }
-      float[] quat = slerp(qA, qB, t);
-
-      // Normalize the interpolated quaternion
-      float len = sqrt(quat[0]*quat[0] + quat[1]*quat[1] + quat[2]*quat[2] + quat[3]*quat[3]);
-      quat[0] /= len;
-      quat[1] /= len;
-      quat[2] /= len;
-      quat[3] /= len;
-
-      // 1. Create rotation matrix from quaternion
-      PMatrix3D rotationMatrix = quatToMatrix(quat);
-      //normalizeScaling(rotationMatrix); doesnt help
-      
-      // 2. Apply translation to the rotated space
-      PMatrix3D translationMatrix = new PMatrix3D();
-      translationMatrix.translate(pos.x * scale, pos.y * scale, pos.z * scale);
-      
-      // 3. Combine as Translation * Rotation (T * R)
-      translationMatrix.apply(rotationMatrix);
-      bone.animatedMatrix = translationMatrix;
-      bone.animatedMatrix.scale(scale);
-    }
+      result.quat = slerp(qA, qB, t);
+      return result;
   }
+
   
   float[] slerp(float[] qa, float[] qb, float t) {
     float[] qm = new float[4];
