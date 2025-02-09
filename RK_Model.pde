@@ -6,6 +6,8 @@
 
 import processing.data.XML;
 import java.util.Map;
+import java.util.regex.*;
+import java.util.Collections;
 
 int readInt4(byte[] b, int o) {
   return (b[o] & 0xFF) |
@@ -396,6 +398,13 @@ class RKModel {
   ArrayList<Submesh> submeshes = new ArrayList<>();
   HashMap<String, Submesh> submeshMap = new HashMap<>();
   HashMap<Submesh, PShape> childShapeMap = new HashMap<>();
+  
+  Map<Integer, List<Submesh>> setMap = new HashMap<>();
+  List<Submesh> defaultNonEyeSubmeshes = new ArrayList<>();
+  List<Submesh> defaultEyeSubmeshes = new ArrayList<>();
+  List<Integer> availableSets = new ArrayList<>();
+  int selectedSet = 0;
+
   ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
   ArrayList<PShape> childShapes = new ArrayList<PShape>();
   AnimVisibilityData visibilityData;
@@ -1159,81 +1168,142 @@ class RKModel {
         }
     }
     println("Loaded " + vertices.size() + " vertices with " + uvs.size() + " UV sets");
+    processSubmeshesIntoSets();
   }
 
+  void processSubmeshesIntoSets() {
+      setMap.clear();
+      defaultNonEyeSubmeshes.clear();
+      defaultEyeSubmeshes.clear();
+      availableSets.clear();
+  
+      for (Submesh submesh : submeshes) {
+          String name = submesh.name;
+          Matcher matcher = Pattern.compile("_(\\d+)$").matcher(name);
+          if (matcher.find()) {
+              int setNum = Integer.parseInt(matcher.group(1));
+              setMap.computeIfAbsent(setNum, k -> new ArrayList<>()).add(submesh);
+          } else {
+              if (name.matches(".*eyes_.*")) {
+                  defaultEyeSubmeshes.add(submesh);
+              } else {
+                  defaultNonEyeSubmeshes.add(submesh);
+              }
+          }
+      }
+  
+      availableSets.addAll(setMap.keySet());
+      Collections.sort(availableSets);
+  
+      if (!availableSets.isEmpty()) {
+          selectedSet = availableSets.get(0);
+      } else {
+          selectedSet = -1;
+      }
+  }
 
   void buildMesh() {
-      Submesh mainSubmesh = null;
-      // Find the main submesh (e.g. body)
-      for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
-          if (entry.getKey().matches(".*_body$")) {
-              mainSubmesh = entry.getValue();
-              break;
-          }
-      }
-      if (mainSubmesh == null) {
-          println("Error: No main submesh found.");
-          return;
-      }
-  
-      // Create an ordered list of submeshes:
-      // 1. Main submesh first.
-      // 2. Then all submeshes that are not eye-related.
-      // 3. Finally, all submeshes with names containing "eyes_".
       ArrayList<Submesh> orderedSubmeshes = new ArrayList<>();
-      orderedSubmeshes.add(mainSubmesh); // Main is always first.
+      Submesh mainSubmesh = null;
   
-      // Add all submeshes that are not the main and are not eyes.
-      for (Submesh submesh : submeshes) {
-          if (submesh == mainSubmesh) continue;
-          if (submesh.name.matches(".*eyes_.*")) continue;  // Skip eye submeshes for now.
-          orderedSubmeshes.add(submesh);
-      }
+      if (!availableSets.isEmpty()) {
+          List<Submesh> selectedSetSubmeshes = setMap.get(selectedSet);
+          if (selectedSetSubmeshes == null) {
+              println("Error: Selected set not available.");
+              return;
+          }
   
-      // Add every submesh whose name contains "eyes_" last.
-      for (Submesh submesh : submeshes) {
-          if (submesh.name.matches(".*eyes_.*")) {
+          // Find main submesh in the selected set
+          for (Submesh submesh : selectedSetSubmeshes) {
+              String baseName = submesh.name.replaceAll("_\\d+$", "");
+              if (baseName.matches(".*_body$")) {
+                  mainSubmesh = submesh;
+                  break;
+              }
+          }
+          if (mainSubmesh == null) {
+              println("Error: No main submesh found in selected set.");
+              return;
+          }
+  
+          orderedSubmeshes.add(mainSubmesh);
+  
+          // Add other submeshes from the selected set
+          for (Submesh submesh : selectedSetSubmeshes) {
+              if (submesh != mainSubmesh) {
+                  orderedSubmeshes.add(submesh);
+              }
+          }
+  
+          // Add default non-eye submeshes
+          orderedSubmeshes.addAll(defaultNonEyeSubmeshes);
+  
+          // Add eye submeshes
+          orderedSubmeshes.addAll(defaultEyeSubmeshes);
+      } else {
+          // Fallback to original logic if no sets
+          for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
+              if (entry.getKey().matches(".*_body$")) {
+                  mainSubmesh = entry.getValue();
+                  break;
+              }
+          }
+          if (mainSubmesh == null) {
+              println("Error: No main submesh found.");
+              return;
+          }
+  
+          orderedSubmeshes.add(mainSubmesh);
+  
+          for (Submesh submesh : submeshes) {
+              if (submesh == mainSubmesh) continue;
+              if (submesh.name.matches(".*eyes_.*")) continue;
               orderedSubmeshes.add(submesh);
           }
+  
+          for (Submesh submesh : submeshes) {
+              if (submesh.name.matches(".*eyes_.*")) {
+                  orderedSubmeshes.add(submesh);
+              }
+          }
       }
   
-      // Replace the original submeshes list with the new ordered list.
       submeshes = orderedSubmeshes;
   
-      // Build the mesh shape.
+      // Build the mesh shape
       mesh = createShape(GROUP);
       mainGeometry = createSubmeshShape(mainSubmesh);
       mesh.addChild(mainGeometry);
   
-      // Clear previous child shapes and the map.
       childShapes.clear();
       childShapeMap.clear();
   
-      // For all submeshes after the first (which is the main submesh),
-      // create their child shapes.
       for (int i = 1; i < submeshes.size(); i++) {
           Submesh submesh = submeshes.get(i);
           PShape childShape = createSubmeshShape(submesh);
           mesh.addChild(childShape);
           childShapes.add(childShape);
           childShapeMap.put(submesh, childShape);
-  
-          // Debug output.
           println("Submesh: " + submesh.name + ", Vertex Count: " + childShape.getVertexCount());
       }
   
-      // Hide all child submeshes initially.
       for (PShape child : childShapes) {
           toggleChildVisibility(child, false);
       }
   
-  
+      //Toggle initial visibility of some submeshes
       for (Submesh submesh : submeshes) {
           if (submesh.name.matches(".*eyes_open.*") && childShapeMap.containsKey(submesh)) {
               toggleChildVisibility(childShapeMap.get(submesh), true);
               initialEyeSubmesh = submesh;
           }
-      }
+          if (submesh.name.matches(".*hair.*") || (submesh.name.matches(".*head.*")) && childShapeMap.containsKey(submesh)) {
+              toggleChildVisibility(childShapeMap.get(submesh), true);
+          }
+          if (submesh.name.matches(".*tail.*") && childShapeMap.containsKey(submesh)) {
+              toggleChildVisibility(childShapeMap.get(submesh), true);
+          }
+      }    
   }
 
   PShape createSubmeshShape(Submesh submesh) {
@@ -1253,6 +1323,15 @@ class RKModel {
       }
       part.endShape();
       return part;
+  }
+  
+  void selectSet(int newSet) {
+      if (availableSets.contains(newSet)) {
+          selectedSet = newSet;
+          buildMesh();
+      } else {
+          println("Error: Set " + newSet + " not available.");
+      }
   }
 
   void updateMeshVertices() {
