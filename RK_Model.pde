@@ -393,8 +393,9 @@ class RKModel {
   boolean hasAnimations = false;
   PShape mesh;
   PShape mainGeometry;
-  ArrayList<PShape> subShapeList = new ArrayList<PShape>();
   ArrayList<Submesh> submeshes = new ArrayList<>();
+  HashMap<String, Submesh> submeshMap = new HashMap<>();
+  HashMap<Submesh, PShape> childShapeMap = new HashMap<>();
   ArrayList<PShape> meshParts = new ArrayList<>(); // Stores separate shapes for each submesh
   ArrayList<PShape> childShapes = new ArrayList<PShape>();
   AnimVisibilityData visibilityData;
@@ -492,7 +493,7 @@ class RKModel {
     String getCSVFile(String filename) {
     String[][] patterns = {
       {"type01", "pony_type01"},
-      {"type02", "pony_type02_con_lod2"},
+      {"type02", "pony_type01"},
       {"type03", "pony_type03"},
       {"type04", "pony_type01"},
       {"type05", "pony_type01"},
@@ -1071,45 +1072,47 @@ class RKModel {
           println("Successfully loaded", triangles.size(), "triangles");
       
   
-      if (submeshes != null && !submeshes.isEmpty()) {
-          for (Submesh submesh : submeshes) {
-              // Calculate byte offset using index size
-              int start = faceSec.offset + (submesh.offset * indexSize);
-              
-              // Debug: Print submesh info
-              println("Loading submesh: " + submesh.name + 
-                      ", start: " + start + 
-                      ", triangles: " + submesh.trianglesCount);
-      
-              // Ensure the start offset is within bounds
-              if (start < 0 || start >= data.length) {
-                  println("Error: Invalid start offset for submesh " + submesh.name);
-                  continue;
-              }
-      
-              for (int i = 0; i < submesh.trianglesCount; i++) {
-                  // Calculate the offset for the current triangle
-                  int off = start + (i * bytesPerTriangle);
-      
-                  // Ensure the offset is within bounds
-                  if (off + bytesPerTriangle > data.length) {
-                      println("Error: Invalid triangle offset for submesh " + submesh.name);
-                      break;
-                  }
-      
-                  int[] tri = new int[3];
-                  for (int j = 0; j < 3; j++) {
-                      if (use32bit) {
-                          tri[j] = readInt4(data, off + (j * 4));
-                      } else {
-                          tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
-                      }
-                  }
-                  submesh.triangles.add(tri);
-              }
-          }
-      }
-   }
+        if (submeshes != null && !submeshes.isEmpty()) {
+            for (Submesh submesh : submeshes) {
+                submeshMap.put(submesh.name, submesh);
+
+                // Calculate byte offset using index size
+                int start = faceSec.offset + (submesh.offset * indexSize);
+                
+                // Debug: Print submesh info
+                println("Loading submesh: " + submesh.name + 
+                        ", start: " + start + 
+                        ", triangles: " + submesh.trianglesCount);
+        
+                // Ensure the start offset is within bounds
+                if (start < 0 || start >= data.length) {
+                    println("Error: Invalid start offset for submesh " + submesh.name);
+                    continue;
+                }
+        
+                for (int i = 0; i < submesh.trianglesCount; i++) {
+                    // Calculate the offset for the current triangle
+                    int off = start + (i * bytesPerTriangle);
+        
+                    // Ensure the offset is within bounds
+                    if (off + bytesPerTriangle > data.length) {
+                        println("Error: Invalid triangle offset for submesh " + submesh.name);
+                        break;
+                    }
+        
+                    int[] tri = new int[3];
+                    for (int j = 0; j < 3; j++) {
+                        if (use32bit) {
+                            tri[j] = readInt4(data, off + (j * 4));
+                        } else {
+                            tri[j] = readShort2(data, off + (j * 2)) & 0xFFFF;
+                        }
+                    }
+                    submesh.triangles.add(tri);
+                }
+            }
+        }
+     }
 
     Section weightSec = sections.get(17);
     if (weightSec != null) {
@@ -1160,40 +1163,78 @@ class RKModel {
 
 
   void buildMesh() {
-      // Create the main mesh using the first submesh
-      Submesh mainSubmesh = submeshes.get(0);
-      mesh = createShape(GROUP); 
+      Submesh mainSubmesh = null;
+      // Find the main submesh (e.g. body)
+      for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
+          if (entry.getKey().matches(".*_body$")) {
+              mainSubmesh = entry.getValue();
+              break;
+          }
+      }
+      if (mainSubmesh == null) {
+          println("Error: No main submesh found.");
+          return;
+      }
+  
+      // Create an ordered list of submeshes:
+      // 1. Main submesh first.
+      // 2. Then all submeshes that are not eye-related.
+      // 3. Finally, all submeshes with names containing "eyes_".
+      ArrayList<Submesh> orderedSubmeshes = new ArrayList<>();
+      orderedSubmeshes.add(mainSubmesh); // Main is always first.
+  
+      // Add all submeshes that are not the main and are not eyes.
+      for (Submesh submesh : submeshes) {
+          if (submesh == mainSubmesh) continue;
+          if (submesh.name.matches(".*eyes_.*")) continue;  // Skip eye submeshes for now.
+          orderedSubmeshes.add(submesh);
+      }
+  
+      // Add every submesh whose name contains "eyes_" last.
+      for (Submesh submesh : submeshes) {
+          if (submesh.name.matches(".*eyes_.*")) {
+              orderedSubmeshes.add(submesh);
+          }
+      }
+  
+      // Replace the original submeshes list with the new ordered list.
+      submeshes = orderedSubmeshes;
+  
+      // Build the mesh shape.
+      mesh = createShape(GROUP);
       mainGeometry = createSubmeshShape(mainSubmesh);
-      mesh.addChild(mainGeometry); // First submesh becomes main geometry
+      mesh.addChild(mainGeometry);
   
-      // Store child submeshes in a list
-      childShapes.clear(); // Ensure the list is empty before adding new children
+      // Clear previous child shapes and the map.
+      childShapes.clear();
+      childShapeMap.clear();
   
+      // For all submeshes after the first (which is the main submesh),
+      // create their child shapes.
       for (int i = 1; i < submeshes.size(); i++) {
-          Submesh childSubmesh = submeshes.get(i);
-          PShape childShape = createSubmeshShape(childSubmesh);
-          mesh.addChild(childShape); // Add as child to main mesh
-          childShapes.add(childShape); // Store in list
+          Submesh submesh = submeshes.get(i);
+          PShape childShape = createSubmeshShape(submesh);
+          mesh.addChild(childShape);
+          childShapes.add(childShape);
+          childShapeMap.put(submesh, childShape);
+  
+          // Debug output.
+          println("Submesh: " + submesh.name + ", Vertex Count: " + childShape.getVertexCount());
       }
   
-      // Hide all child submeshes
-      for (int i = 0; i < childShapes.size(); i++) {
-          toggleChildVisibility(childShapes.get(i), false);
+      // Hide all child submeshes initially.
+      for (PShape child : childShapes) {
+          toggleChildVisibility(child, false);
       }
   
-      // Show only the 2nd submesh by default (for now) and assign it as the initial eye submesh.
-      // Adjust the index as needed based on which child you want to be the default.
-      int whichChildShape = 2;  
-      if (childShapes.size() > whichChildShape) {
-          toggleChildVisibility(childShapes.get(whichChildShape), true);
-          // Because childShapes.get(0) corresponds to submeshes.get(1),
-          // childShapes.get(whichChildShape) corresponds to submeshes.get(whichChildShape + 1).
-          initialEyeSubmesh = submeshes.get(whichChildShape + 1);
-      } else {
-          println("Index Exceeded");
+  
+      for (Submesh submesh : submeshes) {
+          if (submesh.name.matches(".*eyes_open.*") && childShapeMap.containsKey(submesh)) {
+              toggleChildVisibility(childShapeMap.get(submesh), true);
+              initialEyeSubmesh = submesh;
+          }
       }
   }
-
 
   PShape createSubmeshShape(Submesh submesh) {
       PShape part = createShape();
@@ -1201,7 +1242,8 @@ class RKModel {
       part.texture(texture);
       part.textureMode(NORMAL);
       part.noStroke();
-      
+  
+      // Preallocate vertices in the PShape
       for (int[] tri : submesh.triangles) {
           for (int index : tri) {
               PVector v = vertices.get(index);
@@ -1220,24 +1262,36 @@ class RKModel {
       }
   
       int submeshIndex = 0;
+      // Iterate over all children of the mesh.
       for (PShape part : mesh.getChildren()) {
-          int vertexIndex = 0;
+          // Make sure the submesh index is valid.
+          if (submeshIndex >= submeshes.size()) break;
           Submesh submesh = submeshes.get(submeshIndex);
   
+          int vertexIndex = 0;
+          // Calculate how many vertices we expect for this submesh.
+          int expectedVertexCount = submesh.triangles.size() * 3; // 3 vertices per triangle
+          if (part.getVertexCount() < expectedVertexCount) {
+              println("Error: PShape does not have enough vertices for submesh " + submesh.name);
+              continue;
+          }
+  
+          // Update vertices for each triangle.
           for (int[] tri : submesh.triangles) {
               for (int j = 0; j < 3; j++) {
                   int originalIndex = tri[j];
                   if (originalIndex < skinnedVerts.size()) {
                       PVector v = skinnedVerts.get(originalIndex);
-                      part.setVertex(vertexIndex, v.x, v.y, v.z); 
+                      part.setVertex(vertexIndex, v.x, v.y, v.z);
+                      vertexIndex++;
+                  } else {
+                      println("Error: Vertex index out of bounds for submesh " + submesh.name);
                   }
-                  vertexIndex++;
               }
           }
           submeshIndex++;
       }
   }
-
 
   void applySkinning() {
   // Initialize skinnedVerts with original vertex positions
@@ -1366,7 +1420,7 @@ class RKModel {
                           }
                       }
                   }
-                  // Check for "none" mode (interpreted here as closed)
+                  // Check for "none" mode (interpreted here as open)
                   else if (fv.eyeState.mode.toString().toLowerCase().contains("none") && !fv.eyeState.blink) {
                       currentEyeMode = "closed";
                       isBlinking = false;
@@ -1427,7 +1481,7 @@ class RKModel {
                   println("Processing regular submesh: " + xmlID + ", Visible: " + visible);
   
                   for (Submesh sm : submeshes) {
-                      if (sm.name.toLowerCase().contains(xmlID.toLowerCase())) {
+                      if (sm.name.toLowerCase().equals(xmlID.toLowerCase())) {
                           toggleSubmeshVisibility(sm, visible);
                           println("Toggling visibility of submesh " + sm.name + ": " + visible);
                       }
@@ -1467,16 +1521,12 @@ class RKModel {
       }
   }
 
-  void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
-      int index = submeshes.indexOf(sm);
-      if (index <= 0) return; 
-  
-      int childIndex = index - 1; // Adjust for childShapes indexing
-      if (childIndex >= 0 && childIndex < childShapes.size()) {
-          PShape child = childShapes.get(childIndex);
-          toggleChildVisibility(child, visible); 
-      }
-  }
+void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
+    if (childShapeMap.containsKey(sm)) {
+        PShape child = childShapeMap.get(sm);
+        toggleChildVisibility(child, visible);
+    }
+}
   
   void toggleChildVisibility(PShape shape, boolean show) {
       if (shape == null) return;
