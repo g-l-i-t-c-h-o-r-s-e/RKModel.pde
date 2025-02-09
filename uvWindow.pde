@@ -7,12 +7,12 @@ class UV_Window extends PApplet {
   ArrayList<int[]> triangles;
 
   public void settings() {
-    size(model.texture.width, model.texture.height - 50);
+    size(model.textures.get(0).width, model.textures.get(0).height - 50);
   }
 
   public void setup() {
     background(50);
-    texture = model.texture;
+    texture = model.textures.get(0);
     uvs = model.uvs;
     triangles = model.triangles;
   }
