@@ -148,30 +148,33 @@ class AnimationState {
   }
 
   void update() {
-    if (!playing) return;
+  if (!playing) return;
 
-    long currentTime = millis();
-    frameTime += (currentTime - lastUpdate) / 1000.0;
-    lastUpdate = currentTime;
+  long currentTime = millis();
+  frameTime += (currentTime - lastUpdate) / 1000.0;
+  lastUpdate = currentTime;
 
-    float frameDuration = 1.0 / clip.fps;
+  float frameDuration = 1.0 / clip.fps;
 
-    if (frameTime >= frameDuration) {
-      frameTime = 0;
-      currentFrame++;
+  // Calculate how many frames to advance (to handle fast-forwarding)
+  int framesAdvanced = (int)(frameTime / frameDuration);
+  if (framesAdvanced > 0) {
+      currentFrame += framesAdvanced;
+      frameTime = frameTime % frameDuration; // Carry over remaining time
 
-      // Loop or stop when exceeding currentEndFrame
+      // Handle looping or clamping
       if (currentFrame > currentEndFrame) {
-        if (clip.loop) {
-          currentFrame = currentStartFrame; // Loop to adjusted start frame
-        } else {
-          currentFrame = currentEndFrame;
-          playing = false;
+          if (clip.loop) {
+              currentFrame = currentStartFrame + (currentFrame - currentEndFrame - 1);
+          } else {
+              currentFrame = currentEndFrame;
+              playing = false;
+          }
         }
       }
     }
   }
-}
+
 
 class SkinningData {
   ArrayList<ArrayList<VertexWeight>> weights = new ArrayList<>();
@@ -417,6 +420,7 @@ class RKModel {
   int selectedSet = 0;
   ArrayList<PShape> meshParts = new ArrayList<>();
   ArrayList<PShape> childShapes = new ArrayList<PShape>();
+  boolean hideWings = false;
   AnimVisibilityData visibilityData;
   ArrayList<PImage> textures = new ArrayList<PImage>();
   float scale = 1;
@@ -727,6 +731,7 @@ class RKModel {
       }
   }
 
+
   private void findMouthBone() {
       for (Bone b : bones) {
           if (b.name.toLowerCase().endsWith("_bn_mouth") || b.name.toLowerCase().endsWith("_bn_jaw")) {
@@ -988,8 +993,15 @@ class RKModel {
 
           float t = currentAnim.frameTime * currentAnim.clip.fps;
           int frameA = currentAnim.currentFrame;
-          int frameB = min(frameA + 1, currentAnim.currentEndFrame);
-
+          int frameB;
+          
+          // Check if we're at the end of a looping animation
+          if (currentAnim.clip.loop && frameA == currentAnim.currentEndFrame) {
+              frameB = currentAnim.currentStartFrame; // Wrap to start
+          } else {
+              frameB = min(frameA + 1, currentAnim.currentEndFrame);
+          }
+  
           AnimationFrame poseA = animationData.frames.get(frameA);
           AnimationFrame poseB = animationData.frames.get(frameB);
 
@@ -1486,7 +1498,7 @@ class RKModel {
           toggleChildVisibility(child, false);
       }
   
-      //Toggle initial visibility of some submeshes
+      //Toggle on initial visibility of some submeshes
       for (Submesh submesh : submeshes) {
           if (submesh.name.matches(".*eyes_open.*") && childShapeMap.containsKey(submesh)) {
               toggleChildVisibility(childShapeMap.get(submesh), true);
@@ -1539,29 +1551,29 @@ class RKModel {
       }
   }
 
-void updateMeshVertices() {
-    if (mesh == null) return;
-
-    int submeshIndex = 0;
-    for (PShape part : mesh.getChildren()) {
-        if (submeshIndex >= submeshes.size()) break;
-        Submesh submesh = submeshes.get(submeshIndex);
-
-        // Only update vertices if the submesh is visible
-        if (submesh.currentVisible || submesh.name.toString().toLowerCase().contains("eyes_")) {
-            if (submesh.vertexIndices != null) {
-                for (int i = 0; i < submesh.vertexIndices.length; i++) {
-                    int originalIndex = submesh.vertexIndices[i];
-                    if (originalIndex < skinnedVerts.size()) {
-                        PVector v = skinnedVerts.get(originalIndex);
-                        part.setVertex(i, v.x, v.y, v.z);
-                    }
-                }
-            }
-        }
-        submeshIndex++;
-    }
-}
+  void updateMeshVertices() {
+      if (mesh == null) return;
+  
+      int submeshIndex = 0;
+      for (PShape part : mesh.getChildren()) {
+          if (submeshIndex >= submeshes.size()) break;
+          Submesh submesh = submeshes.get(submeshIndex);
+  
+          // Only update vertices if the submesh is visible
+          if (submesh.currentVisible || submesh.name.toString().toLowerCase().contains("eyes_")) {
+              if (submesh.vertexIndices != null) {
+                  for (int i = 0; i < submesh.vertexIndices.length; i++) {
+                      int originalIndex = submesh.vertexIndices[i];
+                      if (originalIndex < skinnedVerts.size()) {
+                          PVector v = skinnedVerts.get(originalIndex);
+                          part.setVertex(i, v.x, v.y, v.z);
+                      }
+                  }
+              }
+          }
+          submeshIndex++;
+      }
+  }
 
   void applySkinning() {
   // Initialize skinnedVerts with original vertex positions
@@ -1594,6 +1606,8 @@ void updateMeshVertices() {
              
             //IGNORE THE JAW/MOUTH BONE SO WE CAN MODULATE IT WITH AUDIO :DDDD 
             if (modulateMouth && bone.name.toLowerCase().endsWith("_bn_jaw") || (bone.name.toLowerCase().endsWith("_bn_mouth"))) continue;
+            if (hideWings) hidewingBones(); //hide wings if you want with model.hideWings(true);
+
 
             // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
             PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
@@ -1602,16 +1616,7 @@ void updateMeshVertices() {
 
             // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
             skinningMatrix.apply(bone.inverseBindMatrix);
-
-            //oh cool this works
-            /*
-            boolean hideWings = true;
-            if (hideWings) {
-            if (bone.name.toLowerCase().contains("_bn_wing")) {
-              bone.animatedMatrix.scale(0);
-                }
-            }
-            */
+            
 
             // Transform vertex
             PVector transformed = new PVector();
@@ -1632,11 +1637,24 @@ void updateMeshVertices() {
     }
     
     if (modulateMouth) modulateMouthBone(); // Apply modulation to jaw/mouth vertices
+
     
     updateMeshVertices();
 
     if (startup) {
         startup = false; //dont use rest pose matrix after loading model
+    }
+  }
+  
+  public void hideWings(boolean enable) {
+  hideWings = enable;
+  }
+    
+  void hidewingBones() {
+  for (Bone bone : bones) {
+    if (bone.name.toLowerCase().contains("_bn_wing")) {
+      bone.animatedMatrix.scale(0);
+        }
     }
   }
   
@@ -1928,5 +1946,6 @@ void updateMeshVertices() {
         shape(submeshShape);
     } //
     */
+    //
   }
 }
