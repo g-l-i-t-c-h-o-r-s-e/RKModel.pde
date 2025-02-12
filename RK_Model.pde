@@ -1,4 +1,3 @@
-
 /*******************************************************************************
  * Animated MLP Gameloft RK Model Loader/Renderer for Processing 4 (WIP)
  * https://gist.github.com/g-l-i-t-c-h-o-r-s-e/5590148123825db0205a1ff0d0428f0e
@@ -384,6 +383,13 @@ class RKModel {
   ArrayList<Bone> processingOrder; // = new ArrayList<>();
   ArrayList<Bone> rootBones; // = new ArrayList<>();
   HashMap<Integer, Integer> boneIdMap;
+  Bone mouthBone;
+  Bone headBone;
+  boolean modulateMouth = false;
+  float mouthModulationSensitivity = 0.1;
+  float mouthModulationSmoothing = 0.5;
+  float smoothedAmplitude = 0;
+  float currentAmplitude = 0;
   ArrayList<String> materials = new ArrayList<>();
   int uvOffset;
   String uvFormat;
@@ -453,6 +459,7 @@ class RKModel {
     readSubmeshInfo(data);
     loadMaterials(data);
     loadBones(data);
+    findMouthBone();
     loadGeometry(data);
     computeInverseBindMatrices();
     buildMesh();
@@ -719,7 +726,32 @@ class RKModel {
           printBoneHierarchy(child, depth + 1);
       }
   }
+
+  private void findMouthBone() {
+      for (Bone b : bones) {
+          if (b.name.toLowerCase().endsWith("_bn_mouth") || b.name.toLowerCase().endsWith("_bn_jaw")) {
+              mouthBone = b;
+              println("Found mouth bone: " + b.name);
+          }
+          else if (b.name.toLowerCase().endsWith("_bn_head")) {
+              headBone = b;
+              println("Found head bone: " + b.name);
+          }
+      }
+  }
   
+    private void modulateMouthBone() {
+        if (mouthBone == null || !modulateMouth || currentAmplitude == 0) return;
+        
+        // Smooth the amplitude
+        smoothedAmplitude = mouthModulationSmoothing * smoothedAmplitude 
+            + (1 - mouthModulationSmoothing) * currentAmplitude;
+        
+        // Calculate modulation and apply to Y-axis
+        float modulation = smoothedAmplitude * mouthModulationSensitivity;
+        mouthBone.animatedMatrix.m13 += modulation;
+    }
+
   void loadAnimations(String anim_File) {
     byte[] data = loadBytes(anim_File);
     if (data == null) return;
@@ -878,6 +910,7 @@ class RKModel {
           updateVisibilityForFrame(currentAnim.clip.name, (currentFrame - currentAnim.currentStartFrame));
       }
       applyBonePoses();
+      if (modulateMouth) modulateMouthBone();
       applySkinning();
   }
   
@@ -1097,6 +1130,22 @@ class RKModel {
       matrix.set(m);
   }
   
+    public void enableMouthModulation(boolean enable) {
+        modulateMouth = enable;
+    }
+
+    public void setMouthModulationSensitivity(float sensitivity) {
+        mouthModulationSensitivity = sensitivity;
+    }
+
+    public void setMouthModulationSmoothing(float smoothing) {
+        mouthModulationSmoothing = smoothing;
+    }
+
+    public void setAmplitude(float amp) {
+        currentAmplitude = amp;
+    }
+  
   // Print Bone Matrix
   void printMatrix(PMatrix3D mat) {
     // PMatrix3D stores values in column-major order
@@ -1314,6 +1363,16 @@ class RKModel {
   }
 
   void buildMesh() {
+    //free memory
+    if (mesh != null) {
+        mesh = null;
+        for (PShape child : childShapes) {
+            child = null;
+        }
+        childShapes.clear();
+        childShapeMap.clear();
+    }    
+
       ArrayList<Submesh> orderedSubmeshes = new ArrayList<>();
       Submesh mainSubmesh = null;
   
@@ -1327,7 +1386,7 @@ class RKModel {
           // Find main submesh in the selected set
           for (Submesh submesh : selectedSetSubmeshes) {
               String baseName = submesh.name.replaceAll("_\\d+$", "");
-              if (baseName.matches(".*_body$")) {
+              if (baseName.matches(".*_body.*$")) {
                   mainSubmesh = submesh;
                   break;
               }
@@ -1351,35 +1410,36 @@ class RKModel {
   
           // Add eye submeshes
           orderedSubmeshes.addAll(defaultEyeSubmeshes);
-      } else {
-          // Fallback to original logic if no sets
-          for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
-              if (entry.getKey().matches(".*_body$")) {
-                  mainSubmesh = entry.getValue();
-                  break;
+          
+          } else {
+              // Fallback to original logic if no sets
+              for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
+                  if (entry.getKey().matches(".*_body.*$")) {
+                      mainSubmesh = entry.getValue();
+                      break;
+                  }
               }
-          }
-          if (mainSubmesh == null) {
-              println("Error: No main submesh found.");
-              return;
-          }
-  
-          orderedSubmeshes.add(mainSubmesh);
-  
-          for (Submesh submesh : submeshes) {
-              if (submesh == mainSubmesh) continue;
-              if (submesh.name.matches(".*eyes_.*")) continue;
-              orderedSubmeshes.add(submesh);
-          }
-  
-          for (Submesh submesh : submeshes) {
-              if (submesh.name.matches(".*eyes_.*")) {
+              if (mainSubmesh == null) {
+                  println("Error: No main submesh found.");
+                  return;
+              }
+      
+              orderedSubmeshes.add(mainSubmesh);
+      
+              for (Submesh submesh : submeshes) {
+                  if (submesh == mainSubmesh) continue;
+                  if (submesh.name.matches(".*eyes_.*")) continue;
                   orderedSubmeshes.add(submesh);
               }
+      
+              for (Submesh submesh : submeshes) {
+                  if (submesh.name.matches(".*eyes_.*")) {
+                      orderedSubmeshes.add(submesh);
+                  }
+              }
           }
-      }
   
-      submeshes = orderedSubmeshes;
+      submeshes = orderedSubmeshes; //rebuild submesh list with the new order
   
       // Build the mesh shape
       mesh = createShape(GROUP);
@@ -1455,27 +1515,29 @@ class RKModel {
       }
   }
 
-  void updateMeshVertices() {
-      if (mesh == null) return;
-  
-      int submeshIndex = 0;
-      for (PShape part : mesh.getChildren()) {
-          if (submeshIndex >= submeshes.size()) break;
-          Submesh submesh = submeshes.get(submeshIndex);
-  
-          if (submesh.vertexIndices != null) {
-              for (int i = 0; i < submesh.vertexIndices.length; i++) {
-                  int originalIndex = submesh.vertexIndices[i];
-                  if (originalIndex < skinnedVerts.size()) {
-                      PVector v = skinnedVerts.get(originalIndex);
-                      part.setVertex(i, v.x, v.y, v.z);
-                  }
-              }
-          }
-  
-          submeshIndex++;
-      }
-  }
+void updateMeshVertices() {
+    if (mesh == null) return;
+
+    int submeshIndex = 0;
+    for (PShape part : mesh.getChildren()) {
+        if (submeshIndex >= submeshes.size()) break;
+        Submesh submesh = submeshes.get(submeshIndex);
+
+        // Only update vertices if the submesh is visible
+        if (submesh.currentVisible || submesh.name.toString().toLowerCase().contains("eyes_")) {
+            if (submesh.vertexIndices != null) {
+                for (int i = 0; i < submesh.vertexIndices.length; i++) {
+                    int originalIndex = submesh.vertexIndices[i];
+                    if (originalIndex < skinnedVerts.size()) {
+                        PVector v = skinnedVerts.get(originalIndex);
+                        part.setVertex(i, v.x, v.y, v.z);
+                    }
+                }
+            }
+        }
+        submeshIndex++;
+    }
+}
 
   void applySkinning() {
   // Initialize skinnedVerts with original vertex positions
@@ -1505,6 +1567,8 @@ class RKModel {
         for (VertexWeight w : weights) {
             if (w.boneIndex >= bones.size()) continue;
             Bone bone = bones.get(w.boneIndex);
+            
+            //if (bone.name.toLowerCase().endsWith("_bn_jaw") || (bone.name.toLowerCase().endsWith("_bn_mouth"))) continue;
 
             // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
             PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
@@ -1534,7 +1598,7 @@ class RKModel {
     updateMeshVertices();
 
     if (startup) {
-        startup = false;
+        startup = false; //dont use rest pose matrix after loading model
     }
   }
 
@@ -1706,6 +1770,7 @@ class RKModel {
   }
 
   void toggleSubmeshVisibility(Submesh sm, boolean visible) { 
+      sm.currentVisible = visible;
       if (childShapeMap.containsKey(sm)) {
           PShape child = childShapeMap.get(sm);
           toggleChildVisibility(child, visible);
@@ -1714,11 +1779,10 @@ class RKModel {
   
   void toggleChildVisibility(PShape shape, boolean show) {
       if (shape == null) return;
-  
       if (show) {
-          shape.resetMatrix();
+          shape.resetMatrix(); // Reset to original state
       } else {
-          shape.scale(0);
+          shape.scale(0); // Hide by scaling to zero
       }
   }
 
@@ -1825,7 +1889,7 @@ class RKModel {
     PShape submeshShape = renderSubmesh(1); // Change index to test other submeshes
     if (submeshShape != null) {
         shape(submeshShape);
-    }
+    } //
     */
   }
 }
