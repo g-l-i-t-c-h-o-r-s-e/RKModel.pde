@@ -644,7 +644,7 @@ class RKModel {
         println("Warning: Failed to load texture for material " + matName);
         textures.add(null); // Add null as a placeholder
       }
-      //println(i + ": " + matName);
+      println(i + ": " + matName);
     }
   }
 
@@ -740,17 +740,57 @@ class RKModel {
       }
   }
   
-    private void modulateMouthBone() {
-        if (mouthBone == null || !modulateMouth || currentAmplitude == 0) return;
-        
-        // Smooth the amplitude
-        smoothedAmplitude = mouthModulationSmoothing * smoothedAmplitude 
-            + (1 - mouthModulationSmoothing) * currentAmplitude;
-        
-        // Calculate modulation and apply to Y-axis
-        float modulation = smoothedAmplitude * mouthModulationSensitivity;
-        mouthBone.animatedMatrix.m13 += modulation;
-    }
+  private void modulateMouthBone() {
+      if (mouthBone == null || !modulateMouth || currentAmplitude == 0) return;
+  
+      // Smooth the amplitude
+      smoothedAmplitude = mouthModulationSmoothing * smoothedAmplitude 
+          + (1 - mouthModulationSmoothing) * currentAmplitude;
+  
+      // Calculate modulation
+      float modulation = smoothedAmplitude * mouthModulationSensitivity;
+  
+      // Get vertices influenced by the jaw/mouth bone
+      ArrayList<Integer> jawVertices = getJawVertices();
+  
+      // Apply modulation directly to the vertices
+      for (int vertexIndex : jawVertices) {
+          PVector vertex = skinnedVerts.get(vertexIndex);
+          vertex.y += modulation; // Adjust Y-axis (or any axis) based on modulation
+      }
+  }
+
+  ArrayList<Integer> getJawVertices() {
+      ArrayList<Integer> jawVertices = new ArrayList<>();
+      for (int i = 0; i < skinning.weights.size(); i++) {
+          ArrayList<VertexWeight> weights = skinning.weights.get(i);
+          for (VertexWeight w : weights) {
+              if (w.boneIndex == mouthBone.id) {
+                  jawVertices.add(i);
+                  break;
+              }
+          }
+      }
+      return jawVertices;
+  }
+  
+  
+  public void enableMouthModulation(boolean enable) {
+      modulateMouth = enable;
+  }
+
+  public void setMouthModulationSensitivity(float sensitivity) {
+      mouthModulationSensitivity = sensitivity;
+  }
+
+  public void setMouthModulationSmoothing(float smoothing) {
+      mouthModulationSmoothing = smoothing;
+  }
+
+  public void setAmplitude(float amp) {
+      currentAmplitude = amp;
+  }
+
 
   void loadAnimations(String anim_File) {
     byte[] data = loadBytes(anim_File);
@@ -909,8 +949,8 @@ class RKModel {
           }
           updateVisibilityForFrame(currentAnim.clip.name, (currentFrame - currentAnim.currentStartFrame));
       }
+      
       applyBonePoses();
-      if (modulateMouth) modulateMouthBone();
       applySkinning();
   }
   
@@ -1129,22 +1169,6 @@ class RKModel {
   
       matrix.set(m);
   }
-  
-    public void enableMouthModulation(boolean enable) {
-        modulateMouth = enable;
-    }
-
-    public void setMouthModulationSensitivity(float sensitivity) {
-        mouthModulationSensitivity = sensitivity;
-    }
-
-    public void setMouthModulationSmoothing(float smoothing) {
-        mouthModulationSmoothing = smoothing;
-    }
-
-    public void setAmplitude(float amp) {
-        currentAmplitude = amp;
-    }
   
   // Print Bone Matrix
   void printMatrix(PMatrix3D mat) {
@@ -1567,8 +1591,9 @@ void updateMeshVertices() {
         for (VertexWeight w : weights) {
             if (w.boneIndex >= bones.size()) continue;
             Bone bone = bones.get(w.boneIndex);
-            
-            //if (bone.name.toLowerCase().endsWith("_bn_jaw") || (bone.name.toLowerCase().endsWith("_bn_mouth"))) continue;
+             
+            //IGNORE THE JAW/MOUTH BONE SO WE CAN MODULATE IT WITH AUDIO :DDDD 
+            if (modulateMouth && bone.name.toLowerCase().endsWith("_bn_jaw") || (bone.name.toLowerCase().endsWith("_bn_mouth"))) continue;
 
             // Use rest pose matrix just once when the model is initially loaded, probably a better way to do this
             PMatrix3D skinningMatrix = (currentAnim == null || startup == true )
@@ -1577,6 +1602,13 @@ void updateMeshVertices() {
 
             // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
             skinningMatrix.apply(bone.inverseBindMatrix);
+
+            boolean hideWings = true;
+            if (hideWings) {
+            if (bone.name.toLowerCase().contains("_bn_wing")) {
+              bone.animatedMatrix.scale(0);
+                }
+            }
 
             // Transform vertex
             PVector transformed = new PVector();
@@ -1595,13 +1627,15 @@ void updateMeshVertices() {
 
         skinnedVerts.set(i, skinned);
     }
+    
+    if (modulateMouth) modulateMouthBone(); // Apply modulation to jaw/mouth vertices
+    
     updateMeshVertices();
 
     if (startup) {
         startup = false; //dont use rest pose matrix after loading model
     }
   }
-
   
   void loadVisibilityXML(String xmlPath) {
     visibilityData = parseAnimVisibilityXML(xmlPath, this);
