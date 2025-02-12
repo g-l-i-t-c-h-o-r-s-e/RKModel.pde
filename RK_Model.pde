@@ -1603,12 +1603,15 @@ void updateMeshVertices() {
             // Calculate skinning matrix: Global Transform * Inverse Bind Matrix
             skinningMatrix.apply(bone.inverseBindMatrix);
 
+            //oh cool this works
+            /*
             boolean hideWings = true;
             if (hideWings) {
             if (bone.name.toLowerCase().contains("_bn_wing")) {
               bone.animatedMatrix.scale(0);
                 }
             }
+            */
 
             // Transform vertex
             PVector transformed = new PVector();
