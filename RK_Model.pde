@@ -389,6 +389,8 @@ class RKModel {
   Bone mouthBone;
   Bone headBone;
   boolean modulateMouth = false;
+  float jawCorrection = 1.0;
+  boolean correctJaw = false;
   float mouthModulationSensitivity = 0.1;
   float mouthModulationSmoothing = 0.5;
   float smoothedAmplitude = 0;
@@ -745,7 +747,7 @@ class RKModel {
       }
   }
   
-  private void modulateMouthBone() {
+  private void modulateMouthBone(float jawCorrection) {
       if (mouthBone == null || !modulateMouth || currentAmplitude == 0) return;
   
       // Smooth the amplitude
@@ -761,7 +763,13 @@ class RKModel {
       // Apply modulation directly to the vertices
       for (int vertexIndex : jawVertices) {
           PVector vertex = skinnedVerts.get(vertexIndex);
-          vertex.y += modulation; // Adjust Y-axis (or any axis) based on modulation
+          
+          // Makes the mouth look better by closing it a little more initially
+          if (correctJaw) { 
+            vertex.y = (vertex.y - jawCorrection);
+          }
+          
+          vertex.y += + modulation; // Adjust Y-axis based on modulation
       }
   }
 
@@ -794,6 +802,11 @@ class RKModel {
 
   public void setAmplitude(float amp) {
       currentAmplitude = amp;
+  }
+  
+  public void enableJawCorrection(float correction) {
+      jawCorrection = correction;
+      correctJaw = true;
   }
 
 
@@ -1636,7 +1649,7 @@ class RKModel {
         skinnedVerts.set(i, skinned);
     }
     
-    if (modulateMouth) modulateMouthBone(); // Apply modulation to jaw/mouth vertices
+    if (modulateMouth) modulateMouthBone(jawCorrection); // Apply modulation to jaw/mouth vertices
 
     
     updateMeshVertices();
