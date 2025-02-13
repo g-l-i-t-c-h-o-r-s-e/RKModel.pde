@@ -88,6 +88,7 @@ void setup() {
 
   model = new RKModel(modelFolder + modelFile);
   model.enableMouthModulation(true);
+  model.enableJawCorrection(1.0); //optional
   model.setMouthModulationSensitivity(audioSensitivity);
   model.setMouthModulationSmoothing(0.4);
   String animFile = model.getAnimFile(modelFile); //detect anim
