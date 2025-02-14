@@ -10,7 +10,7 @@ AudioPlayer player2;
 
 float audioSensitivity = 30.0; // Mouth modulation sensitivity (ranges between 50 and 150 depending on the model, 10 seems good for microphone input)
 float smoothingFactor = 0.7; // Same case as above but (ranges between 0.4 and 0.8)
-boolean useMicrophone = false; // Enable for microphone input instead
+boolean useMicrophone = true; // Enable for microphone input instead
 
 PeasyCam cam;
 RKModel model;
@@ -93,21 +93,21 @@ void setup() {
   } else {
     
     // First audio file (vocals)
-    player = minim.loadFile("bth.wav");
+    player = minim.loadFile("vocals.wav");
     player.loop();
 
     // Second audio file (optional background)
-    player2 = minim.loadFile("bthh.wav");
+    player2 = minim.loadFile("background.wav");
     player2.loop();
   }
 
   // RK Model initilization and setup
   model = new RKModel(modelFolder + modelFile);
-  model.hideWings(true); //optional temporary hack to hide wings (for custom reskins)
-  model.enableMouthModulation(true); //optional mouth modulation via microphone or file input
-  model.enableJawCorrection(1.2); //additional optional function to close mouth a little more initially
-  model.setMouthModulationSensitivity(audioSensitivity);
-  model.setMouthModulationSmoothing(smoothingFactor);
+  //model.hideWings(true); //optional temporary hack to hide wings (for custom reskins)
+  //model.enableMouthModulation(true); //optional mouth modulation via microphone or file input
+  //model.enableJawCorrection(1.2); //additional optional function to close mouth a little more initially
+  //model.setMouthModulationSensitivity(audioSensitivity);
+  //model.setMouthModulationSmoothing(smoothingFactor);
 
   String animFile = model.getAnimFile(modelFile); //detect anim
   model.loadAnimations(modelFolder + animFile);
@@ -168,8 +168,8 @@ void draw() {
   rotateY(PI * 0.8);
   translate(0, 30, 0);
   model.draw();
-  float amp = useMicrophone ? in.mix.level() : player.mix.level(); //get microphone or audio amplitude levels
-  model.setAmplitude(amp); //apply amplitude to models jaw/mouth bone
+  //float amp = useMicrophone ? in.mix.level() : player.mix.level(); //get microphone or audio amplitude levels
+  //model.setAmplitude(amp); //apply amplitude to models jaw/mouth bone
   //model.drawBonesAnimated();
   //model.drawBonesStatic();
     //playit();  // Function to play animation sequence
