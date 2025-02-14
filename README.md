@@ -1,5 +1,5 @@
 # WIP
-For video export to work, after installing the Video Export library it requires replacing the videoExport.jar located in `Documents\Processing\libraries\VideoExport\library\videoExport.jar`
+For video export to work, after installing the Video Export library it requires replacing the videoExport.jar located in `Documents\Processing\libraries\VideoExport\library\videoExport.jar` <br>
 with [this version](https://github.com/hamoid/video_export_processing/blob/kotlinGradle/p5library/videoExport/library/videoExport.jar), if you are using Processing 4+
 
 
