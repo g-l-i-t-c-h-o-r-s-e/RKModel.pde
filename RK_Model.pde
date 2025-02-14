@@ -533,7 +533,12 @@ class RKModel {
       {"type09", "pony_type09"},
       {"type10", "pony_type10"},
       {"type11", "pony_type11_timech_lod1"},
-      {"type12", "pony_type12"},
+      {"pony_type12_applebloomseapony_lod1", "pony_type12_young_seapony"},
+      {"pony_type12_scootalooseapony_lod1", "pony_type12_young_seapony"},
+      {"pony_type12_sweetiebelleseapony_lod1", "pony_type12_young_seapony"},
+      {"type12_sea", "pony_type12_seapony"},
+      {"seapony_", "pony_type12_seapony"},
+      {"pony_type12_", "pony_type12"},
       {"type13", "pony_type13"}
     };
     
@@ -585,7 +590,12 @@ class RKModel {
       {"type09", "pony_type09.anim"},
       {"type10", "pony_type10.anim"},
       {"type11", "pony_type11_timech_lod1.anim"},
-      {"type12", "pony_type12.anim"},
+      {"pony_type12_applebloomseapony_lod1", "pony_type12_young_seapony.anim"},
+      {"pony_type12_scootalooseapony_lod1", "pony_type12_young_seapony.anim"},
+      {"pony_type12_sweetiebelleseapony_lod1", "pony_type12_young_seapony.anim"},
+      {"type12_sea", "pony_type12_seapony.anim"},
+      {"seapony_", "pony_type12_seapony.anim"},
+      {"pony_type12_", "pony_type12.anim"},
       {"type13", "pony_type13.anim"}
     };
     
@@ -736,7 +746,7 @@ class RKModel {
 
   private void findMouthBone() {
       for (Bone b : bones) {
-          if (b.name.toLowerCase().endsWith("_bn_mouth") || b.name.toLowerCase().endsWith("_bn_jaw")) {
+          if (b.name.toLowerCase().endsWith("_bn_mouth") || b.name.toLowerCase().endsWith("_bn_jaw") || b.name.toLowerCase().endsWith("bn_jaw")) {
               mouthBone = b;
               println("Found mouth bone: " + b.name);
           }
@@ -770,6 +780,7 @@ class RKModel {
           }
           
           vertex.y += + modulation; // Adjust Y-axis based on modulation
+          //mouthBone.animatedMatrix.m13 += modulation;
       }
   }
 
