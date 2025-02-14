@@ -1,15 +1,16 @@
 import peasy.*;
 import processing.opengl.*;
-import gifAnimation.*;
+import com.hamoid.*;
 
 import ddf.minim.*;
 Minim minim;
 AudioInput in;
 AudioPlayer player;
 AudioPlayer player2;
-float audioSensitivity = 100.0;
 
-boolean useMicrophone = false; //enable for microphone input instead
+float audioSensitivity = 30.0; // Mouth modulation sensitivity (ranges between 50 and 150 depending on the model, 10 seems good for microphone input)
+float smoothingFactor = 0.7; // Same case as above but (ranges between 0.4 and 0.8)
+boolean useMicrophone = false; // Enable for microphone input instead
 
 PeasyCam cam;
 RKModel model;
@@ -18,47 +19,60 @@ PImage tex;
 PImage backgroundImg;
 boolean isPanningCamera = false;
 boolean dragandrop = true; //drag and drop images into drop window to change background
-boolean previewUV = false;
+boolean previewUV = true;
 
-// ---- GIF Recording Variables ----
-GifMaker gifExport;
+// ---- Video Recording Variables ----
+VideoExport videoExport;
 boolean recordRequested = false;
 boolean isRecording = false;
-int gifOutputWidth = 600;
-int gifOutputHeight = 400;
+int captureStartFrame = -1;
+int currentAnimFPS = 20;
+String outputFormat = "gif"; // Change to "mp4" or "gif"
+String outputVideoFile = "recording." + outputFormat;
+
 
 String modelFolder = "models/";
 String textureFolder = modelFolder;
 String modelFile = "pony_type01_muffins_lod1.rk";
 
-int currentAnimationIndex = 119;
+int currentAnimationIndex = 97;
 boolean loop = true;
 String backgroundImage = "lol2.png";
 int currentSet = 0;
 
 
 
-
-//example of sequencing animations
-int[] animOrder = {94, 94};  //{15, 15};  // The indices of the animations to play.
-int animQueueIndex = 0;       // Which animation in the queue is next.
+// Example of sequencing animations and recording it
+int[] animOrder = {94, 92};        // The indices of the animations to play, add as many as you like.
+int animQueueIndex = 0;            // Which animation in the queue is nex, don't touch.
+boolean isSequencePlaying = false; // Boolean to track if we're in a sequence
 void playit() {
   // Only proceed if not in transition AND no active animation
   if (!model.isInTransition() && (model.currentAnim == null || !model.currentAnim.playing)) {
     if (animQueueIndex < animOrder.length) {
-      int animIndex = animOrder[animQueueIndex];
+      // Start recording at the beginning of the sequence
       if (animQueueIndex == 0) {
-        model.playAnimation(model.animationNames.get(animIndex), false, 0, 0);
+        recordRequested = true; // Request recording
+        isSequencePlaying = true; // Mark that a sequence is playing
+        println("Starting sequence and requesting recording...");
       }
-      if (animQueueIndex == 1) {
-        model.playAnimation(model.animationNames.get(animIndex), false, 0, 0);
-      }
+
+      // Play the current animation in the sequence
+      int animIndex = animOrder[animQueueIndex];
+      model.playAnimation(model.animationNames.get(animIndex), false, 0, 0);
       println("Playing animation index: " + animIndex);
       animQueueIndex++;
     } else {
-      animQueueIndex = 0;
-      // Optional: Add delay before restarting sequence
-      // delay(500);
+      // End of sequence
+      if (isSequencePlaying) {
+        isSequencePlaying = false; // Mark sequence as complete
+        // animQueueIndex = 0; // Reset sequence index
+        if (isRecording) {
+          videoExport.endMovie(); // Stop recording
+          isRecording = false;
+          println("Finished sequence and stopped recording.");
+        }
+      }
     }
   }
 }
@@ -67,63 +81,81 @@ void playit() {
 void setup() {
   size(1200, 800, P3D);
 
-  // Enable drag-and-drop
+  // Enable drag-and-drop background change
   if (dragandrop) {
     setupDragAndDrop();
   }
 
+  // Setup audio objects for mouth/jaw modulation
   minim = new Minim(this);
   if (useMicrophone) {
     in = minim.getLineIn(Minim.STEREO, 512);
   } else {
+    
     // First audio file (vocals)
-    player = minim.loadFile("vocal_track.wav");
-    player.loop();  // Loop first file
+    player = minim.loadFile("bth.wav");
+    player.loop();
 
-    // Second audio file (optional)
-    player2 = minim.loadFile("full_track_or_instrumental.wav");
-    player2.loop();  // Loop second file
+    // Second audio file (optional background)
+    player2 = minim.loadFile("bthh.wav");
+    player2.loop();
   }
 
-
+  // RK Model initilization and setup
   model = new RKModel(modelFolder + modelFile);
-  model.enableMouthModulation(true);
-  model.enableJawCorrection(1.0); //optional
+  model.hideWings(true); //optional temporary hack to hide wings (for custom reskins)
+  model.enableMouthModulation(true); //optional mouth modulation via microphone or file input
+  model.enableJawCorrection(1.2); //additional optional function to close mouth a little more initially
   model.setMouthModulationSensitivity(audioSensitivity);
-  model.setMouthModulationSmoothing(0.4);
+  model.setMouthModulationSmoothing(smoothingFactor);
+
   String animFile = model.getAnimFile(modelFile); //detect anim
   model.loadAnimations(modelFolder + animFile);
-  //model.selectSet(14);
-
+  //model.playAnimation(model.animationNames.get(currentAnimationIndex), loop,1,0); //skipping the first frame on a looped animation makes interpolation smoother
   //model.playAnimation("apple_idle_01_l",true,6,9);
-
-  //if (model.animationNames.size() > 0) {
-  //  model.playAnimation(model.animationNames.get(currentAnimationIndex), loop,0,0);
-  //}
-
+  //model.selectSet(14); //select the models active body set if it has any
 
   // Set up PeasyCam
   cam = new PeasyCam(this, 130);
-  //model.playAnimation(model.animationNames.get(15),loop,30,40);
-
   backgroundImg = loadImage(backgroundImage);
   if (backgroundImg == null) {
     println("Error: background image not found");
-  }
+  };
 
   // Enable UV preview
   if (previewUV) {
-    // Initialize and launch the secondary window
     secWindow = new UV_Window();
     PApplet.runSketch(new String[] {"Secondary Window"}, secWindow);
   }
+
+  // VideoExport initialization
+  videoExport = new VideoExport(this, (modelFile + "-" + millis() + "-" +  outputVideoFile));
+  //videoExport.setDebugging(true);
+  if(outputFormat.equals("gif")) {
+    videoExport.setFfmpegVideoSettings(new String[]{
+      "[ffmpeg]", "-y", "-f", "rawvideo", "-vcodec", "rawvideo",
+      "-s", "[width]x[height]", "-pix_fmt", "rgb24", "-r", str(currentAnimFPS),
+      "-i", "-", "-vf", "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+      "-loop", "0", "-vcodec", "gif", "[output]"
+    });
+  } else {
+    videoExport.setFfmpegVideoSettings(new String[]{
+      "[ffmpeg]", "-y", "-f", "rawvideo", "-vcodec", "rawvideo",
+      "-s", "[width]x[height]", "-pix_fmt", "rgb24", "-r", str(currentAnimFPS),
+      "-i", "-", "-an", "-vcodec", "h264",
+      "-pix_fmt", "yuv420p", "-crf", "18", "[output]"
+    });
+    videoExport.setQuality(18, 128); // Higher quality for MP4
+  }
+
+//end of Setup() 
 }
 
 void draw() {
   if (backgroundImg != null) {
     background(backgroundImg);
   } else {
-    background(30); // fallback color
+    background(30);
   }
 
   PGraphicsOpenGL pgl = (PGraphicsOpenGL) g;
@@ -135,67 +167,69 @@ void draw() {
   pushMatrix();
   rotateY(PI * 0.8);
   translate(0, 30, 0);
-
   model.draw();
-  float amp = useMicrophone ? in.mix.level() : player.mix.level();
-  model.setAmplitude(amp);
-  model.drawBonesAnimated();
-  
-  playit();  // Check if animation finished, then trigger next
-
+  float amp = useMicrophone ? in.mix.level() : player.mix.level(); //get microphone or audio amplitude levels
+  model.setAmplitude(amp); //apply amplitude to models jaw/mouth bone
+  //model.drawBonesAnimated();
+  //model.drawBonesStatic();
+    //playit();  // Function to play animation sequence
 
   popMatrix();
   pgl.endPGL();
 
+
   if (recordRequested && model.currentAnim != null) {
     if (model.currentAnim.currentFrame == model.currentAnim.currentStartFrame) {
-      gifExport = new GifMaker(this, "recording.gif", 16);
-      gifExport.setQuality(1);
-      gifExport.setRepeat(0);
+      //currentAnimFPS = (int)model.currentAnim.clip.fps;
+      videoExport.setFrameRate(currentAnimFPS);
+      videoExport.startMovie();
       isRecording = true;
       recordRequested = false;
-      println("Started GIF recording...");
+      model.currentAnim.clip.loop = false; //disable loop during recording I guess
+      println("Started recording at " + currentAnimFPS + " FPS");
     }
   }
 
-  if (isRecording && model.currentAnim != null) {
-    PImage currentFrameImg = get();
-    currentFrameImg.resize(gifOutputWidth, gifOutputHeight);
-    gifExport.addFrame(currentFrameImg);
-
-    int relativeFrame = model.currentAnim.currentFrame - model.currentAnim.currentStartFrame;
-    int totalFrames = model.currentAnim.currentEndFrame - model.currentAnim.currentStartFrame + 1;
-    println("Frame: " + relativeFrame + " of " + (totalFrames - 1));
-
-    if (model.currentAnim.currentFrame >= model.currentAnim.currentEndFrame) {
-      gifExport.finish();
+    // Use this if you are recording just one animation (triggered with R key)
+  if (isRecording) {
+    videoExport.saveFrame();
+    if (!model.currentAnim.playing) {
+      videoExport.endMovie();
       isRecording = false;
-      println("Finished GIF recording.");
+      model.currentAnim.playing = true; //restart animation
+      model.currentAnim.clip.loop = true; //re-enable loop
+      println("Finished video recording");
     }
   }
+
+/*
+  // Use this if you are recording an animation sequence
+  if (isRecording) {
+    videoExport.saveFrame();
+  }
+*/
+
+//end of draw()
 }
 
+// Hotkey Functions
 void keyPressed() {
   if (model.animationNames.size() == 0) return;
 
   if (keyCode == RIGHT) {
     currentAnimationIndex = (currentAnimationIndex + 1) % model.animationNames.size();
     model.playAnimation(model.animationNames.get(currentAnimationIndex), loop, 0, 0);
-    println("Animation index: " + currentAnimationIndex);
   } else if (keyCode == LEFT) {
     currentAnimationIndex = (currentAnimationIndex - 1 + model.animationNames.size()) % model.animationNames.size();
     model.playAnimation(model.animationNames.get(currentAnimationIndex), loop, 0, 0);
-    println("Animation index: " + currentAnimationIndex);
   }
 
   if (keyCode == UP) {
     currentSet += 1;
     model.selectSet(currentSet);
-    println("Animation index: " + currentAnimationIndex);
   } else if (keyCode == DOWN) {
     currentSet -= 1;
     model.selectSet(currentSet);
-    println("Set index: " + currentSet);
   }
 
   if (key == 'r' || key == 'R') {
