@@ -652,6 +652,12 @@ class RKModel {
       String matName = header.readString(data, off, 64);
       materials.add(matName);
       
+      // Check if matName has a file extension and remove it if it does
+      int dotIndex = matName.lastIndexOf(".");
+      if (dotIndex > 0) {
+        matName = matName.substring(0, dotIndex); // Remove the extension
+      }
+      
       // Load texture for each material and add to the list
       PImage tex = loadImage(textureFolder + matName + ".png");
       if (tex != null) {
@@ -779,7 +785,7 @@ class RKModel {
             vertex.y = (vertex.y - jawCorrection);
           }
           
-          vertex.y += + modulation; // Adjust Y-axis based on modulation
+          vertex.y += modulation; // Adjust Y-axis based on modulation
           //mouthBone.animatedMatrix.m13 += modulation;
       }
   }
@@ -1962,14 +1968,5 @@ class RKModel {
   void draw() {
     updateAnimation();
     shape(mesh);
-    
-    /*
-    // Render only the second submesh (index 1)
-    PShape submeshShape = renderSubmesh(1); // Change index to test other submeshes
-    if (submeshShape != null) {
-        shape(submeshShape);
-    } //
-    */
-    //
   }
 }
