@@ -443,7 +443,6 @@ class RKModel {
   }
   
   
-  
   String readString(byte[] data, int o, int maxLen) {
     String s = "";
     for (int i = 0; i < maxLen; i++) {
@@ -474,7 +473,7 @@ class RKModel {
     String getFiles = modelFile;
     getFiles = getXMLFile(getFiles);
 
-    loadVisibilityXML(modelFolder + getFiles + ".xml");
+    if (getFiles != null) loadVisibilityXML(modelFolder + getFiles + ".xml");
     printSummary();
     sections.clear(); // clear stuff up for now
     sections = null; // clear stuff up for now
@@ -804,7 +803,6 @@ class RKModel {
       return jawVertices;
   }
   
-  
   public void enableMouthModulation(boolean enable) {
       modulateMouth = enable;
   }
@@ -826,6 +824,57 @@ class RKModel {
       correctJaw = true;
   }
 
+  Bone getBoneByName(String name) {
+      for (Bone bone : bones) {
+          if (bone.name.contains(name)) {
+              return bone;
+          }
+      }
+      println("Bone not found: " + name);
+      return null;
+  }
+
+  ArrayList<PVector> getBoneVertices(String boneName) {
+      ArrayList<PVector> vertices = new ArrayList<>();
+      Bone targetBone = getBoneByName(boneName);
+      if (targetBone == null) return vertices;
+  
+      for (int i = 0; i < skinning.weights.size(); i++) {
+          for (VertexWeight w : skinning.weights.get(i)) {
+              if (w.boneIndex == targetBone.id && w.weight > 0.3) {
+                  vertices.add(skinnedVerts.get(i));
+                  break;
+              }
+          }
+      }
+      return vertices;
+  }
+  
+  PVector getAverageVertexPosition(ArrayList<PVector> vertices) {
+      PVector avg = new PVector();
+      for (PVector v : vertices) avg.add(v);
+      avg.div(vertices.size());
+      return avg;
+  }
+
+  PMatrix3D getBoneWorldMatrix(String boneName) {
+      Bone bone = getBoneByName(boneName);
+      if (bone == null) return new PMatrix3D();
+      
+      PMatrix3D matrix = new PMatrix3D();
+      matrix.apply(bone.animatedMatrix);
+      
+      // Traverse hierarchy to get world matrix
+      Bone current = bone;
+      while (current.parent != -1) {
+          current = bones.get(current.parent);
+          PMatrix3D parentMatrix = new PMatrix3D();
+          parentMatrix.apply(current.animatedMatrix);
+          matrix.apply(parentMatrix);
+      }
+      
+      return matrix;
+  }
 
   void loadAnimations(String anim_File) {
     byte[] data = loadBytes(anim_File);
@@ -1429,16 +1478,16 @@ class RKModel {
   }
 
   void buildMesh() {
-    //free memory
-    if (mesh != null) {
-        mesh = null;
-        for (PShape child : childShapes) {
-            child = null;
-        }
-        childShapes.clear();
-        childShapeMap.clear();
-    }    
-
+      // Free memory
+      if (mesh != null) {
+          mesh = null;
+          for (PShape child : childShapes) {
+              child = null;
+          }
+          childShapes.clear();
+          childShapeMap.clear();
+      }
+  
       ArrayList<Submesh> orderedSubmeshes = new ArrayList<>();
       Submesh mainSubmesh = null;
   
@@ -1457,9 +1506,16 @@ class RKModel {
                   break;
               }
           }
+  
+          // Handle cases where no body submesh is found (e.g., props)
           if (mainSubmesh == null) {
-              println("Error: No main submesh found in selected set.");
-              return;
+              if (!selectedSetSubmeshes.isEmpty()) {
+                  mainSubmesh = selectedSetSubmeshes.get(0);
+                  println("Warning: No main submesh found; using first submesh in set.");
+              } else {
+                  println("Error: Selected set has no submeshes.");
+                  return;
+              }
           }
   
           orderedSubmeshes.add(mainSubmesh);
@@ -1476,36 +1532,42 @@ class RKModel {
   
           // Add eye submeshes
           orderedSubmeshes.addAll(defaultEyeSubmeshes);
-          
-          } else {
-              // Fallback to original logic if no sets
-              for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
-                  if (entry.getKey().matches(".*_body.*$")) {
-                      mainSubmesh = entry.getValue();
-                      break;
-                  }
-              }
-              if (mainSubmesh == null) {
-                  println("Error: No main submesh found.");
-                  return;
-              }
-      
-              orderedSubmeshes.add(mainSubmesh);
-      
-              for (Submesh submesh : submeshes) {
-                  if (submesh == mainSubmesh) continue;
-                  if (submesh.name.matches(".*eyes_.*")) continue;
-                  orderedSubmeshes.add(submesh);
-              }
-      
-              for (Submesh submesh : submeshes) {
-                  if (submesh.name.matches(".*eyes_.*")) {
-                      orderedSubmeshes.add(submesh);
-                  }
+      } else {
+          // Fallback to original logic if no sets
+          for (Map.Entry<String, Submesh> entry : submeshMap.entrySet()) {
+              if (entry.getKey().matches(".*_body.*$")) {
+                  mainSubmesh = entry.getValue();
+                  break;
               }
           }
   
-      submeshes = orderedSubmeshes; //rebuild submesh list with the new order
+          // Fallback if no body submesh found
+          if (mainSubmesh == null) {
+              if (!submeshes.isEmpty()) {
+                  mainSubmesh = submeshes.get(0);
+                  println("Warning: No main submesh found; using first available.");
+              } else {
+                  println("Error: No submeshes available.");
+                  return;
+              }
+          }
+  
+          orderedSubmeshes.add(mainSubmesh);
+  
+          for (Submesh submesh : submeshes) {
+              if (submesh == mainSubmesh) continue;
+              if (submesh.name.matches(".*eyes_.*")) continue;
+              orderedSubmeshes.add(submesh);
+          }
+  
+          for (Submesh submesh : submeshes) {
+              if (submesh.name.matches(".*eyes_.*")) {
+                  orderedSubmeshes.add(submesh);
+              }
+          }
+      }
+  
+      submeshes = orderedSubmeshes; // Rebuild submesh list with the new order
   
       // Build the mesh shape
       mesh = createShape(GROUP);
@@ -1528,7 +1590,7 @@ class RKModel {
           toggleChildVisibility(child, false);
       }
   
-      //Toggle on initial visibility of some submeshes
+      // Toggle on initial visibility of some submeshes
       for (Submesh submesh : submeshes) {
           if (submesh.name.matches(".*eyes_open.*") && childShapeMap.containsKey(submesh)) {
               toggleChildVisibility(childShapeMap.get(submesh), true);
@@ -1540,7 +1602,7 @@ class RKModel {
           if (submesh.name.matches(".*tail.*") && childShapeMap.containsKey(submesh)) {
               toggleChildVisibility(childShapeMap.get(submesh), true);
           }
-      }    
+      }
   }
 
   PShape createSubmeshShape(Submesh submesh) {
@@ -1689,6 +1751,7 @@ class RKModel {
   }
   
   void loadVisibilityXML(String xmlPath) {
+    println("aaa");
     visibilityData = parseAnimVisibilityXML(xmlPath, this);
     println("XML PATH:");
     println(xmlPath);
